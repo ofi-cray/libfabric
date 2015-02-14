@@ -165,6 +165,7 @@ struct gnix_ep_name {
 	struct {
 		uint32_t name_type : 8;
 		uint32_t unused : 24;
+		uint32_t cookie;
 	};
 	uint64_t reserved[4];
 };
@@ -180,9 +181,10 @@ enum gnix_progress_type {
 /*
  * simple struct for gnix fabric, may add more stuff here later
  */
+
 struct gnix_fabric {
 	struct fid_fabric fab_fid;
-	atomic_t ref;
+	struct list_head cdm_list;    /* llist of cdm's opened from fabric */
 };
 
 /*
@@ -190,13 +192,20 @@ struct gnix_fabric {
  * since a single cdm with a given cookie/cdm_id can only
  * be bound once to a given physical aries nic
  */
+
 struct gnix_domain {
 	struct fid_domain domain_fid;
-	struct gnix_cdm *cdm;
-	struct gnix_nic *nic;
-	struct list_head domain_wq;
-	uint32_t device_id;
-	uint32_t device_addr;
+	/* used for fabric object llist of domains*/
+	struct list_node list;
+	/* list nics this domain is attached to, TODO: thread safety */
+	struct list_head nic_list;
+	/* cm nic bound to this domain */
+	struct gnix_cm_nic *cm_nic;
+	uint8_t ptag;
+	uint32_t cookie;
+	/* work queue for domain */
+        struct list_head domain_wq;
+        int ref_cnt;
 };
 
 struct gnix_cdm {
@@ -212,8 +221,33 @@ struct gnix_cdm {
 	int ref_cnt;
 };
 
+/*
+ * gnix cm nic struct - to be used only for GNI_EpPostData, etc.
+ */
+
+struct gnix_cm_nic {
+	struct list_node        list;
+	gni_cdm_handle_t        gni_cdm_hndl;
+	gni_nic_handle_t        gni_nic_hndl;
+	/* free list of datagrams   */
+	struct list_head        datagram_free_list;
+	/* list of active wc datagrams   */
+	struct list_head        wc_datagram_active_list;
+	/* free list of wc datagrams   */
+	struct list_head        wc_datagram_free_list;
+	/* pointer to domain this nic is attached to */
+	struct gnix_domain      *domain;
+	struct gnix_datagram    *datagram_base;
+	uint32_t                inst_id;
+	uint32_t                device_id;
+	uint32_t                device_addr;
+	int                     ref_cnt;
+};
+
+
 struct gnix_nic {
 	struct list_node list;
+	gni_cdm_handle_t        gni_cdm_hndl;
 	gni_nic_handle_t gni_nic_hndl;
 	/* receive completion queue for hndl */
 	gni_cq_handle_t rx_cq;
@@ -227,7 +261,7 @@ struct gnix_nic {
 	struct list_head wqe_active_list;
 	/* list for managing wqe's */
 	struct gnix_wqe_list *wqe_list;
-	/* list of active smsg req's */
+        struct gnix_domain      *domain;                   /* pointer to domain this nic is attached to */
 	struct list_head smsg_active_req_list;
 	/* list for managing smsg req's */
 	struct gnix_smsg_req_list *smsg_req_list;
@@ -302,17 +336,41 @@ struct gnix_rdm_ep {
  * globals
  */
 extern const char const gnix_fab_name[];
+extern const char const gnix_dom_name[];
+extern uint32_t gnix_cdm_modes;
 
 /*
- * prototypes
+ * linked list helpers
+ */
+
+static inline void gnix_list_node_init(struct list_node *node)
+{
+	node->prev = node->next = NULL;
+}
+
+static inline void gnix_list_del_init(struct list_node *node)
+{
+	list_del(node);
+	node->prev = node->next = node;
+}
+
+/*
+ * prototypes 
  */
 int gnix_domain_open(struct fid_fabric *fabric, struct fi_info *info,
-		     struct fid_domain **domain, void *context);
-int gnix_rdm_getinfo(uint32_t version, const char *node, const char *service,
-		     uint64_t flags, struct fi_info *hints,
-		     struct fi_info **info);
-struct fi_info *gnix_fi_info(enum fi_ep_type ep_type, struct fi_info *hints);
-int gnix_verify_domain_attr(struct fi_domain_attr *attr);
+                     struct fid_domain **domain, void *context);
+int gnix_av_open(struct fid_domain *domain, struct fi_av_attr *attr,
+		 struct fid_av **av, void *context);
+int gnix_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
+		 struct fid_cq **cq, void *context);
+int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
+		 struct fid_ep **ep, void *context);
+
+int gnix_mr_reg(struct fid_domain *domain, const void *buf, size_t len,
+		uint64_t access, uint64_t offset, uint64_t requested_key,
+		uint64_t flags, struct fid_mr **mr, void *context);
+
+
 
 #ifdef __cplusplus
 } /* extern "C" */

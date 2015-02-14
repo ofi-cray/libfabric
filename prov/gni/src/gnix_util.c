@@ -53,5 +53,105 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+#include "alps/alps.h"
+#include "alps/alps_toolAssist.h"
+#include "alps/libalpsutil.h"
+#include "alps/libalpslli.h"
+
 #include "gnix.h"
 #include "gnix_util.h"
+
+int gnixu_get_rdma_credentials(void *addr, uint8_t *ptag, uint32_t *cookie)
+{
+	int ret = FI_SUCCESS;
+	int alps_status=0;
+	uint64_t apid;
+	size_t alps_count;
+	alpsAppLLIGni_t *rdmacred_rsp=NULL;
+	alpsAppGni_t *rdmacred_buf;
+
+	if((ptag == NULL) || (cookie == NULL)) {
+		ret = -FI_EINVAL;
+		goto err;
+	}
+
+	/* 
+	 * TODO: need to handle non null addr differently at some point, 
+	 * a non-NULL addr can be used to acquire RDMA credentials other than
+	 * those assigned by ALPS/nativized slurm.
+ 	 */
+
+	ret = alps_app_lli_lock(); /* lli_lock doesn't return anything useful */
+
+        /*
+         * First get our apid
+         */
+
+        ret = alps_app_lli_put_request(ALPS_APP_LLI_ALPS_REQ_APID, NULL, 0);
+	if (ret != ALPS_APP_LLI_ALPS_STAT_OK) {
+		fprintf(stderr,"lli put failed\n");
+            ret = -FI_EIO;
+            goto err;
+        }
+
+        ret = alps_app_lli_get_response (&alps_status, &alps_count);
+	if (alps_status != ALPS_APP_LLI_ALPS_STAT_OK) {
+		fprintf(stderr,"lli get response failed failed ret ="
+			"%s\n",strerror(ret));
+            ret = -FI_EIO;
+            goto err;
+        }
+
+        ret = alps_app_lli_get_response_bytes (&apid, sizeof(apid));
+	if (ret != ALPS_APP_LLI_ALPS_STAT_OK) {
+		fprintf(stderr,"lli get response bytes failed\n");
+            ret = -FI_EIO;
+            goto err;
+        }
+
+        /*
+         * now get the GNI rdma credentials info
+         */ 
+
+        ret = alps_app_lli_put_request(ALPS_APP_LLI_ALPS_REQ_GNI, NULL, 0);
+	if (ret != ALPS_APP_LLI_ALPS_STAT_OK) {
+            ret = -FI_EIO;
+            goto err;
+        }
+
+        ret = alps_app_lli_get_response(&alps_status, &alps_count);
+	if (alps_status != ALPS_APP_LLI_ALPS_STAT_OK) {
+            ret = -FI_EIO;
+            goto err;
+        }
+
+        rdmacred_rsp = (alpsAppLLIGni_t *)malloc(alps_count);
+        if (rdmacred_rsp == NULL) {
+            ret = -FI_ENOMEM;
+            goto err;
+        }
+
+        memset(rdmacred_rsp,0,alps_count);
+
+        ret = alps_app_lli_get_response_bytes(rdmacred_rsp, alps_count);
+	if (ret != ALPS_APP_LLI_ALPS_STAT_OK) {
+            ret = -FI_EIO;
+            goto err;
+        }
+
+	rdmacred_buf = (alpsAppGni_t *)(rdmacred_rsp->u.buf);
+
+	/* 
+	 * just use the first ptag/cookie for now
+	 */
+
+	*ptag = rdmacred_buf[0].ptag;
+	*cookie = rdmacred_buf[0].cookie;
+err:
+        alps_app_lli_unlock();
+	if (rdmacred_rsp != NULL)
+		free(rdmacred_rsp);
+	return ret;
+
+
+}

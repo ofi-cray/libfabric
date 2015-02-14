@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2015 Cray Inc. All rights reserved.
+ * Copyright (c) 2015 Los Alamos National Security, LLC. Allrights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -31,16 +32,19 @@
  */
 
 //
-// Endpoint common code
+// CQ common code
 //
+
 #include <stdlib.h>
 #include <string.h>
 
 #include "gnix.h"
 #include "gnix_util.h"
 
-int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
-                 struct fid_ep **ep, void *context) 
+int gnix_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
+                 struct fid_cq **cq, void *context)
 {
 	return -FI_ENOSYS;  /* TODO: implement this puppy */
 }
+
+

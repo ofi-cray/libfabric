@@ -26,7 +26,20 @@ m4_include([config/pkg.m4])
                                   LDFLAGS="$CRAY_GNI_HEADER_LIBS $LDFLAGS"
                                  ],
                                  [gni_header_happy=0])
+               PKG_CHECK_MODULES([CRAY_ALPS_LLI], [cray-alpslli],
+                                 [alps_lli_happy=1
+                                  CPPFLAGS="$CRAY_ALPS_LLI_CFLAGS $CPPFLAGS"
+                                  LDFLAGS="$CRAY_ALPS_LLI_LIBS $LDFLAGS"
+                                 ],
+                                 [alps_lli_happy=0])
+               PKG_CHECK_MODULES([CRAY_ALPS_UTIL], [cray-alpsutil],
+                                 [alps_util_happy=1
+                                  CPPFLAGS="$CRAY_ALPS_UTIL_CFLAGS $CPPFLAGS"
+                                  LDFLAGS="$CRAY_ALPS_UTIL_LIBS $LDFLAGS"
+                                 ],
+                                 [alps_util_happy=0])
 	       ])
-	AS_IF([test $gni_header_happy -eq 1 -a $ugni_lib_happy -eq 1], [$1], [$2])
+	AS_IF([test $gni_header_happy -eq 1 -a $ugni_lib_happy -eq 1 \
+               -a $alps_lli_happy -eq 1 -a $alps_util_happy -eq 1], [$1], [$2])
 ])
 

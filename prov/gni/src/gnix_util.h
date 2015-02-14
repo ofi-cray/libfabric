@@ -49,4 +49,10 @@ extern const char gnix_dom_name[];
 #define GNIX_LOG_WARN(...) FI_WARN(gnix_fab_name, __VA_ARGS__)
 #define GNIX_LOG_ERROR(...) FI_WARN(gnix_fab_name, __VA_ARGS__)
 
+/*
+ * prototypes
+ */
+
+int gnixu_get_rdma_credentials(void *addr, uint8_t *ptag, uint32_t *cookie);
+ 
 #endif

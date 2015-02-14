@@ -31,16 +31,20 @@
  */
 
 //
-// Endpoint common code
+// memory registration common code
 //
+
 #include <stdlib.h>
 #include <string.h>
 
 #include "gnix.h"
 #include "gnix_util.h"
 
-int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
-                 struct fid_ep **ep, void *context) 
+int gnix_mr_reg(struct fid_domain *domain, const void *buf, size_t len,
+		uint64_t access, uint64_t offset, uint64_t requested_key,
+		uint64_t flags, struct fid_mr **mr, void *context)
 {
 	return -FI_ENOSYS;  /* TODO: implement this puppy */
 }
+
+

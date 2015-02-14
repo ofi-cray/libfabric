@@ -74,6 +74,9 @@ AC_PROG_CC_C99
 dnl Checks for header files.
 AC_HEADER_STDC
 
+dnl Check for compiler features
+AC_C_TYPEOF
+
 LT_INIT
 
 dnl dlopen support is optional

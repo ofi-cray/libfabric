@@ -284,6 +284,9 @@ _gni_files = \
 	prov/gni/src/gnix_fabric.c \
 	prov/gni/src/gnix_dom.c \
 	prov/gni/src/gnix_ep.c \
+	prov/gni/src/gnix_cq.c \
+	prov/gni/src/gnix_av.c \
+	prov/gni/src/gnix_mr.c \
 	prov/gni/src/gnix_ep_rdm.c \
 	prov/gni/src/gnix_nameserver.c \
 	prov/gni/src/gnix_util.c 

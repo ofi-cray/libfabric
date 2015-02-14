@@ -54,8 +54,13 @@
 #include "gnix_util.h"
 #include "gnix_nameserver.h"
 
-const const char gnix_fab_name[] = "gni";
-const const char gnix_dom_name[] = "/sys/class/gni/kgni0";
+const char gnix_fab_name[] = "gni";
+const char gnix_dom_name[] = "/sys/class/gni/kgni0";
+uint32_t gnix_cdm_modes = (GNI_CDM_MODE_FAST_DATAGRAM_POLL | \
+			   GNI_CDM_MODE_FMA_SHARED | \
+			   GNI_CDM_MODE_FMA_SMALL_WINDOW | \
+			   GNI_CDM_MODE_FORK_PARTCOPY | \
+			   GNI_CDM_MODE_ERR_NO_KILL);
 
 const struct fi_fabric_attr gnix_fabric_attr = {
 	.fabric = NULL,
@@ -80,12 +85,12 @@ static int gnix_fabric_close(fid_t fid)
 	struct gnix_fabric *fab;
 	fab = container_of(fid, struct gnix_fabric, fab_fid);
 
-	if (atomic_get(&fab->ref)) {
+	if(!list_empty(&fab->cdm_list)) {
 		return -FI_EBUSY;
 	}
 
 	free(fab);
-	return 0;
+	return FI_SUCCESS;
 }
 
 static struct fi_ops gnix_fab_fi_ops = {
@@ -117,11 +122,10 @@ static int gnix_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric,
 	fab->fab_fid.fid.context = context;
 	fab->fab_fid.fid.ops = &gnix_fab_fi_ops;
 	fab->fab_fid.ops = &gnix_fab_ops;
+        list_head_init(&fab->cdm_list);
 	*fabric = &fab->fab_fid;
-#if 0
-	atomic_init(&fab->ref, 0);
-#endif
-	return 0;
+
+	return FI_SUCCESS;
 }
 
 static int gnix_getinfo(uint32_t version, const char *node, const char *service,

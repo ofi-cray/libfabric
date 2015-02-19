@@ -33,7 +33,6 @@
 //
 // memory registration common code
 //
-
 #include <stdlib.h>
 #include <string.h>
 
@@ -44,7 +43,6 @@ int gnix_mr_reg(struct fid_domain *domain, const void *buf, size_t len,
 		uint64_t access, uint64_t offset, uint64_t requested_key,
 		uint64_t flags, struct fid_mr **mr, void *context)
 {
-	return -FI_ENOSYS;  /* TODO: implement this puppy */
+	/* TODO: implement this puppy */
+	return -FI_ENOSYS;
 }
-
-

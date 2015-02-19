@@ -56,11 +56,11 @@
 
 const char gnix_fab_name[] = "gni";
 const char gnix_dom_name[] = "/sys/class/gni/kgni0";
-uint32_t gnix_cdm_modes = (GNI_CDM_MODE_FAST_DATAGRAM_POLL | \
-			   GNI_CDM_MODE_FMA_SHARED | \
-			   GNI_CDM_MODE_FMA_SMALL_WINDOW | \
-			   GNI_CDM_MODE_FORK_PARTCOPY | \
-			   GNI_CDM_MODE_ERR_NO_KILL);
+
+uint32_t gnix_cdm_modes =
+	(GNI_CDM_MODE_FAST_DATAGRAM_POLL | GNI_CDM_MODE_FMA_SHARED |
+	GNI_CDM_MODE_FMA_SMALL_WINDOW | GNI_CDM_MODE_FORK_PARTCOPY |
+	GNI_CDM_MODE_ERR_NO_KILL);
 
 const struct fi_fabric_attr gnix_fabric_attr = {
 	.fabric = NULL,
@@ -85,7 +85,7 @@ static int gnix_fabric_close(fid_t fid)
 	struct gnix_fabric *fab;
 	fab = container_of(fid, struct gnix_fabric, fab_fid);
 
-	if(!list_empty(&fab->cdm_list)) {
+	if (!list_empty(&fab->cdm_list)) {
 		return -FI_EBUSY;
 	}
 
@@ -122,7 +122,7 @@ static int gnix_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric,
 	fab->fab_fid.fid.context = context;
 	fab->fab_fid.fid.ops = &gnix_fab_fi_ops;
 	fab->fab_fid.ops = &gnix_fab_ops;
-        list_head_init(&fab->cdm_list);
+	list_head_init(&fab->cdm_list);
 	*fabric = &fab->fab_fid;
 
 	return FI_SUCCESS;
@@ -135,7 +135,9 @@ static int gnix_getinfo(uint32_t version, const char *node, const char *service,
 	int ret = 0;
 	int mode = GNIX_FAB_MODES;
 	struct fi_info *gnix_info;
-	struct gnix_ep_name *dest_addr = NULL, *src_addr = NULL, *addr = NULL;
+	struct gnix_ep_name *dest_addr = NULL;
+	struct gnix_ep_name *src_addr = NULL;
+	struct gnix_ep_name *addr = NULL;
 
 	/*
 	 * the code below for resolving a node/service to what
@@ -300,7 +302,7 @@ static int gnix_getinfo(uint32_t version, const char *node, const char *service,
 	gnix_info->tx_attr->caps = gnix_info->caps;
 	gnix_info->tx_attr->mode = gnix_info->mode;
 
-	if(hints && hints->tx_attr && hints->tx_attr->op_flags) {
+	if (hints && hints->tx_attr && hints->tx_attr->op_flags) {
 		gnix_info->tx_attr->op_flags = hints->tx_attr->op_flags;
 	} else {
 		gnix_info->tx_attr->op_flags = GNIX_EP_OP_FLAGS;
@@ -316,7 +318,7 @@ static int gnix_getinfo(uint32_t version, const char *node, const char *service,
 	gnix_info->rx_attr->caps = gnix_info->caps;
 	gnix_info->rx_attr->mode = gnix_info->mode;
 
-	if(hints && hints->rx_attr && hints->rx_attr->op_flags) {
+	if (hints && hints->rx_attr && hints->rx_attr->op_flags) {
 		gnix_info->rx_attr->op_flags = hints->rx_attr->op_flags;
 	} else {
 		gnix_info->rx_attr->op_flags = GNIX_EP_OP_FLAGS;

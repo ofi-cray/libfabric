@@ -40,8 +40,7 @@
 #include "gnix_util.h"
 
 int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
-		 struct fid_ep **ep, void *context)
+                 struct fid_ep **ep, void *context) 
 {
-	/* TODO: implement this puppy */
-	return -FI_ENOSYS;
+	return -FI_ENOSYS;  /* TODO: implement this puppy */
 }

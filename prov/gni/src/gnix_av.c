@@ -34,6 +34,7 @@
 //
 // Address vector common code
 //
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -41,8 +42,9 @@
 #include "gnix_util.h"
 
 int gnix_av_open(struct fid_domain *domain, struct fi_av_attr *attr,
-		 struct fid_av **av, void *context)
+                 struct fid_av **av, void *context)
 {
-	/* TODO: implement this puppy */
-	return -FI_ENOSYS;
+	return -FI_ENOSYS;  /* TODO: implement this puppy */
 }
+
+

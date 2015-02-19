@@ -34,7 +34,6 @@
 //
 // CQ common code
 //
-
 #include <stdlib.h>
 #include <string.h>
 
@@ -42,9 +41,8 @@
 #include "gnix_util.h"
 
 int gnix_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
-                 struct fid_cq **cq, void *context)
+		 struct fid_cq **cq, void *context)
 {
-	return -FI_ENOSYS;  /* TODO: implement this puppy */
+	/* TODO: implement this puppy */
+	return -FI_ENOSYS;
 }
-
-

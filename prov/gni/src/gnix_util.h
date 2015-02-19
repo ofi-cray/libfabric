@@ -38,38 +38,15 @@
 #define _GNIX_UTIL_H_
 
 #include <stdio.h>
+#include "fi_log.h"
 
-#define GNIX_ERROR (1)
-#define GNIX_WARN (2)
-#define GNIX_INFO (3)
+#define GNIX_DEBUG (2)
 
-extern int gnix_log_level;
+extern const char gnix_fab_name[];
+extern const char gnix_dom_name[];
 
-#define GNIX_LOG_INFO(...)                                                     \
-	do {                                                                   \
-		if (gnix_log_level >= GNIX_INFO) {                             \
-			fprintf(stderr, "[GNIX_INFO - %s:%d]: ", __func__,     \
-				__LINE__);                                     \
-			fprintf(stderr, __VA_ARGS__);                          \
-		}                                                              \
-	} while (0)
-
-#define GNIX_LOG_WARN(...)                                                     \
-	do {                                                                   \
-		if (gnix_log_level >= GNIX_WARN) {                             \
-			fprintf(stderr, "[GNIX_WARN - %s:%d]: ", __func__,     \
-				__LINE__);                                     \
-			fprintf(stderr, __VA_ARGS__);                          \
-		}                                                              \
-	} while (0)
-
-#define GNIX_LOG_ERROR(...)                                                    \
-	do {                                                                   \
-		if (gnix_log_level >= GNIX_ERROR) {                            \
-			fprintf(stderr, "[GNIX_ERROR - %s:%d]: ", __func__,    \
-				__LINE__);                                     \
-			fprintf(stderr, __VA_ARGS__);                          \
-		}                                                              \
-	} while (0)
+#define GNIX_LOG_INFO(...) FI_LOG(GNIX_DEBUG, gnix_fab_name, __VA_ARGS__)
+#define GNIX_LOG_WARN(...) FI_WARN(gnix_fab_name, __VA_ARGS__)
+#define GNIX_LOG_ERROR(...) FI_WARN(gnix_fab_name, __VA_ARGS__)
 
 #endif

@@ -55,5 +55,3 @@
 
 #include "gnix.h"
 #include "gnix_util.h"
-
-int gnix_log_level = GNIX_ERROR;

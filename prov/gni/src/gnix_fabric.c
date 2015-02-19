@@ -54,8 +54,8 @@
 #include "gnix_util.h"
 #include "gnix_nameserver.h"
 
-const char const gnix_fab_name[] = "gni";
-const char const gnix_dom_name[] = "/sys/class/gni/kgni0";
+const const char gnix_fab_name[] = "gni";
+const const char gnix_dom_name[] = "/sys/class/gni/kgni0";
 
 const struct fi_fabric_attr gnix_fabric_attr = {
 	.fabric = NULL,
@@ -347,21 +347,10 @@ struct fi_provider gnix_prov = {
 
 GNI_INI
 {
-	char *tmp;
 	struct fi_provider *provider = NULL;
 	gni_return_t status;
 	gni_version_info_t lib_version;
 	int num_devices;
-
-	/*
-	 * todo, may want to put other envariables here
-	 */
-	tmp = getenv("OFI_GNI_LOG_LEVEL");
-	if (tmp) {
-		gnix_log_level = atoi(tmp);
-	} else {
-		gnix_log_level = GNIX_ERROR;
-	}
 
 	/*
 	 * if no GNI devices available, don't register as provider

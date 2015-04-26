@@ -317,37 +317,6 @@ struct gnix_cm_nic {
 };
 
 /*
- * Stores events inside of the event queue.
- *
- * type: EQ event type defined in fi_eq.h
- * len: length of the event
- * flags: control flags
- * buf: event
- * entry: list entry, contains next pointer
- */
-struct gnix_event {
-	uint32_t type;
-	size_t len;
-	uint64_t flags;
-	void *buf;
-	struct slist_entry entry;
-};
-
-/*
- * EQ structure. Contains error and event queue.
- */
-struct gnix_fid_eq {
-	struct fid_eq eq_fid;
-	struct fi_eq_attr attr;
-	struct gnix_fid_fabric *eq_fabric;
-	atomic_t ref_cnt;
-	fastlock_t lock;
-
-	struct slist err_queue;
-	struct slist ev_queue;
-};
-
-/*
  * defines for connection state for gnix VC
  */
 enum gnix_vc_conn_state {

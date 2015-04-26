@@ -38,8 +38,8 @@ extern "C" {
 #endif
 
 #include <fi.h>
-#include <fi_list.h>
 
+#include "gnix_queue.h"
 #include "gnix_wait.h"
 
 #define GNIX_CQ_DEFAULT_FORMAT struct fi_cq_entry
@@ -55,10 +55,8 @@ struct gnix_fid_cq {
 	struct fid_cq cq_fid;
 	struct gnix_fid_domain *domain;
 
-	struct slist ev_queue;
-	struct slist err_queue;
-	struct slist ev_free;
-	struct slist err_free;
+	struct gnix_queue *events;
+	struct gnix_queue *errors;
 
 	struct fi_cq_attr attr;
 	size_t entry_size;

@@ -30,24 +30,6 @@
  * SOFTWARE.
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <errno.h>
-#include <getopt.h>
-#include <poll.h>
-#include <time.h>
-#include <string.h>
-
-#include <rdma/fabric.h>
-#include <rdma/fi_domain.h>
-#include <rdma/fi_errno.h>
-#include <rdma/fi_endpoint.h>
-#include <rdma/fi_cm.h>
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <inttypes.h>
-
 #include "gnix_cq.h"
 #include "gnix.h"
 

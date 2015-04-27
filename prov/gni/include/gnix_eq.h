@@ -30,55 +30,55 @@
  * SOFTWARE.
  */
 
-#ifndef _GNIX_CQ_H_
-#define _GNIX_CQ_H_
+#ifndef _GNIX_EQ_H_
+#define _GNIX_EQ_H_
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include <fi.h>
+#include <rdma/fi_eq.h>
 
 #include "gnix_queue.h"
-#include "gnix_wait.h"
 
-#define GNIX_CQ_DEFAULT_FORMAT struct fi_cq_entry
-#define GNIX_CQ_DEFAULT_SIZE   256
+#define GNIX_EQ_DEFAULT_SIZE 256
 
-struct gnix_cq_entry {
+/*
+ * Stores events inside of the event queue.
+ *
+ * type: EQ event type defined in fi_eq.h
+ * len: length of the event
+ * flags: control flags
+ * buf: event
+ * item: list entry, contains next pointer
+ */
+struct gnix_eq_entry {
+	uint64_t flags;
+	uint32_t type;
+	size_t len;
 	void *the_entry;
-	fi_addr_t source;
+
 	struct slist_entry item;
 };
 
-struct gnix_fid_cq {
-	struct fid_cq cq_fid;
-	struct gnix_fid_domain *domain;
+/*
+ * EQ structure. Contains error and event queue.
+ */
+struct gnix_fid_eq {
+	struct fid_eq eq_fid;
+	struct gnix_fid_fabric *eq_fabric;
 
 	struct gnix_queue *events;
 	struct gnix_queue *errors;
 
-	struct fi_cq_attr attr;
-	size_t entry_size;
-
-	struct fid_wait *wait;
+	struct fi_eq_attr attr;
 
 	fastlock_t lock;
 	atomic_t ref_cnt;
 };
 
-
-ssize_t _gnix_cq_add_event(struct gnix_fid_cq *cq, void *op_context,
-			  uint64_t flags, size_t len, void *buf,
-			  uint64_t data, uint64_t tag);
-
-ssize_t _gnix_cq_add_error(struct gnix_fid_cq *cq, void *op_context,
-			  uint64_t flags, size_t len, void *buf,
-			  uint64_t data, uint64_t tag, size_t olen,
-			  int err, int prov_errno, void *err_data);
-
 #ifdef __cplusplus
 }
 #endif
 
-#endif
+#endif /* _GNIX_EQ_H_ */

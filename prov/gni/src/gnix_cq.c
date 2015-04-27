@@ -39,6 +39,7 @@
 #include <assert.h>
 
 #include "gnix.h"
+#include "gnix_cq.h"
 
 /*******************************************************************************
  * Function pointer for filling specific entry format type.
@@ -86,32 +87,6 @@ static const fill_entry const fill_function[] = {
 /*******************************************************************************
  * Internal helper functions
  ******************************************************************************/
-static struct gnix_cq_entry *alloc_cq_entry(size_t size)
-{
-	struct gnix_cq_entry *entry = malloc(sizeof(*entry));
-
-	if (!entry) {
-		GNIX_ERR(FI_LOG_CQ, "out of memory\n");
-		goto err;
-	}
-
-	GNIX_INFO(FI_LOG_CQ, "generating entry of size %d\n", size);
-	entry->the_entry = malloc(size);
-	if (!entry->the_entry) {
-		GNIX_ERR(FI_LOG_CQ, "out of memory\n");
-		goto cleanup;
-	}
-
-	return entry;
-
-cleanup:
-	free(entry);
-	entry = NULL;
-err:
-	return entry;
-}
-
-
 static void fill_cq_entry(void *cq_entry, void *op_context, uint64_t flags,
 			  size_t len, void *buf, uint64_t data, uint64_t tag)
 {
@@ -152,57 +127,6 @@ static void fill_cq_tagged(void *cq_entry, void *op_context, uint64_t flags,
 	entry->buf = buf;
 	entry->data = data;
 	entry->tag = tag;
-}
-
-static inline void cq_enqueue(struct gnix_fid_cq *cq,
-			      struct gnix_cq_entry *event)
-{
-	if (!cq || !event)
-		return;
-
-	fastlock_acquire(&cq->lock);
-
-	slist_insert_tail(&event->item, &cq->ev_queue);
-
-	fastlock_release(&cq->lock);
-
-	if (cq->wait)
-		_gnix_signal_wait_obj(cq->wait);
-}
-
-static ssize_t cq_dequeue(struct gnix_fid_cq *cq, void *buf, size_t count,
-			  fi_addr_t *src_addr)
-{
-	struct gnix_cq_entry *event;
-	ssize_t read_count = 0;
-
-	if (slist_empty(&cq->ev_queue))
-		return -FI_EAGAIN;
-
-	fastlock_acquire(&cq->lock);
-
-	GNIX_INFO(FI_LOG_CQ, "Attempting to dequeue %d items.\n",
-		  count);
-
-	while (count--) {
-		event = container_of(slist_remove_head(&cq->ev_queue),
-				     struct gnix_cq_entry,
-				     item);
-
-		assert(buf);
-		assert(event->the_entry);
-		memcpy(buf, event->the_entry, cq->entry_size);
-		slist_insert_tail(&event->item, &cq->ev_free);
-
-		buf += cq->entry_size;
-		src_addr++;
-
-		read_count++;
-	}
-
-	fastlock_release(&cq->lock);
-
-	return read_count;
 }
 
 static int verify_cq_attr(struct fi_cq_attr *attr, struct fi_ops_cq *ops,
@@ -290,20 +214,39 @@ static int gnix_cq_set_wait(struct gnix_fid_cq *cq)
 	return ret;
 }
 
-static void free_cq_list(struct slist *cq)
+static void free_cq_entry(struct slist_entry *item)
 {
-	struct slist_entry *entry;
-	struct gnix_cq_entry *item;
+	struct gnix_cq_entry *entry;
 
-	GNIX_TRACE(FI_LOG_CQ, "\n");
+	entry = container_of(item, struct gnix_cq_entry, item);
 
-	while (!slist_empty(cq)) {
-		entry = slist_remove_head(cq);
-		item = container_of(entry, struct gnix_cq_entry, item);
-		free(item->the_entry);
-		free(item);
-	}
+	free(entry->the_entry);
+	free(entry);
 }
+
+static struct slist_entry *alloc_cq_entry(size_t size)
+{
+	struct gnix_cq_entry *entry = malloc(sizeof(*entry));
+
+	if (!entry) {
+		GNIX_ERR(FI_LOG_CQ, "out of memory\n");
+		goto err;
+	}
+
+	entry->the_entry = malloc(size);
+	if (!entry->the_entry) {
+		GNIX_ERR(FI_LOG_CQ, "out of memory\n");
+		goto cleanup;
+	}
+
+	return &entry->item;
+
+cleanup:
+	free(entry);
+err:
+	return NULL;
+}
+
 
 /*******************************************************************************
  * Exposed helper functions
@@ -313,29 +256,30 @@ ssize_t _gnix_cq_add_event(struct gnix_fid_cq *cq, void *op_context,
 			   uint64_t data, uint64_t tag)
 {
 	struct gnix_cq_entry *event;
+	struct slist_entry *item;
 
 	fastlock_acquire(&cq->lock);
 
-	if (!slist_empty(&cq->ev_free)) {
-		event = container_of(slist_remove_head(&cq->ev_free),
-				     struct gnix_cq_entry, item);
-	} else {
-		event = alloc_cq_entry(cq->entry_size);
-	}
-
-	fastlock_release(&cq->lock);
-
-	if (!event) {
+	item = _gnix_queue_get_free(cq->events);
+	if (!item) {
 		GNIX_ERR(FI_LOG_CQ, "error creating cq_entry\n");
 		return -FI_ENOMEM;
 	}
+
+
+	event = container_of(item, struct gnix_cq_entry, item);
 
 	assert(event->the_entry);
 
 	fill_function[cq->attr.format](event->the_entry, op_context, flags,
 			len, buf, data, tag);
 
-	cq_enqueue(cq, event);
+	_gnix_queue_enqueue(cq->events, &event->item);
+
+	if (cq->wait)
+		_gnix_signal_wait_obj(cq->wait);
+
+	fastlock_release(&cq->lock);
 
 	return FI_SUCCESS;
 }
@@ -345,22 +289,19 @@ ssize_t _gnix_cq_add_error(struct gnix_fid_cq *cq, void *op_context,
 			   uint64_t data, uint64_t tag, size_t olen,
 			   int err, int prov_errno, void *err_data)
 {
-	struct gnix_cq_entry *event;
 	struct fi_cq_err_entry *error;
+	struct gnix_cq_entry *event;
+	struct slist_entry *item;
 
 	fastlock_acquire(&cq->lock);
 
-	if (!slist_empty(&cq->err_free)) {
-		event = container_of(slist_remove_head(&cq->ev_free),
-				     struct gnix_cq_entry, item);
-	} else {
-		event = alloc_cq_entry(sizeof(struct fi_cq_err_entry));
-	}
-
-	if (!event) {
+	item = _gnix_queue_get_free(cq->errors);
+	if (!item) {
 		GNIX_ERR(FI_LOG_CQ, "error creating error entry\n");
 		return -FI_ENOMEM;
 	}
+
+	event = container_of(item, struct gnix_cq_entry, item);
 
 	error = event->the_entry;
 
@@ -375,7 +316,7 @@ ssize_t _gnix_cq_add_error(struct gnix_fid_cq *cq, void *op_context,
 	error->prov_errno = prov_errno;
 	error->err_data = err_data;
 
-	slist_insert_tail(&event->item, &cq->err_queue);
+	_gnix_queue_enqueue(cq->errors, &event->item);
 
 	fastlock_release(&cq->lock);
 
@@ -391,6 +332,9 @@ static int gnix_cq_close(fid_t fid)
 
 	GNIX_TRACE(FI_LOG_CQ, "\n");
 
+	if (!fid)
+		return -FI_EINVAL;
+
 	cq = container_of(fid, struct gnix_fid_cq, cq_fid);
 	if (atomic_get(&cq->ref_cnt) != 0) {
 		GNIX_INFO(FI_LOG_CQ, "CQ ref count: %d, not closing.\n",
@@ -401,23 +345,16 @@ static int gnix_cq_close(fid_t fid)
 	atomic_dec(&cq->domain->ref_cnt);
 	assert(atomic_get(&cq->domain->ref_cnt) >= 0);
 
+	fastlock_destroy(&cq->lock);
+
 	if (cq->attr.wait_obj == FI_WAIT_SET)
 		_gnix_wait_set_remove(cq->wait, &cq->cq_fid.fid);
 
-	fastlock_acquire(&cq->lock);
+	_gnix_queue_destroy(cq->events);
+	_gnix_queue_destroy(cq->errors);
 
-	GNIX_INFO(FI_LOG_CQ, "Freeing all resources associated with CQ.\n");
-
-	free_cq_list(&cq->ev_free);
-	free_cq_list(&cq->err_free);
-	free_cq_list(&cq->ev_queue);
-	free_cq_list(&cq->err_queue);
-
-	fastlock_release(&cq->lock);
-
-	fastlock_destroy(&cq->lock);
-	free(cq->cq_fid.ops);
 	free(cq->cq_fid.fid.ops);
+	free(cq->cq_fid.ops);
 	free(cq);
 
 	return FI_SUCCESS;
@@ -427,17 +364,41 @@ static ssize_t gnix_cq_readfrom(struct fid_cq *cq, void *buf, size_t count,
 				fi_addr_t *src_addr)
 {
 	struct gnix_fid_cq *cq_priv;
-	ssize_t read_count;
+	struct gnix_cq_entry *event;
+	struct slist_entry *temp;
+
+	ssize_t read_count = 0;
 
 	if (!cq || !buf || !count)
 		return -FI_EINVAL;
 
 	cq_priv = container_of(cq, struct gnix_fid_cq, cq_fid);
 
-	if (!slist_empty(&cq_priv->err_queue))
+	if (_gnix_queue_peek(cq_priv->errors))
 		return -FI_EAVAIL;
 
-	read_count = cq_dequeue(cq_priv, buf, count, src_addr);
+	if (!_gnix_queue_peek(cq_priv->events))
+		return -FI_EAGAIN;
+
+	fastlock_acquire(&cq_priv->lock);
+
+	while (count--) {
+		temp = _gnix_queue_dequeue(cq_priv->events);
+		event = container_of(temp, struct gnix_cq_entry, item);
+
+		assert(buf);
+		assert(event->the_entry);
+		memcpy(buf, event->the_entry, cq_priv->entry_size);
+
+		_gnix_queue_enqueue_free(cq_priv->events, &event->item);
+
+		buf += cq_priv->entry_size;
+		src_addr++;
+
+		read_count++;
+	}
+
+	fastlock_release(&cq_priv->lock);
 
 	return read_count;
 }
@@ -465,6 +426,8 @@ static ssize_t gnix_cq_readerr(struct fid_cq *cq, struct fi_cq_err_entry *buf,
 {
 	struct gnix_fid_cq *cq_priv;
 	struct gnix_cq_entry *event;
+	struct slist_entry *entry;
+
 	ssize_t read_count = 0;
 
 	if (!cq || !buf)
@@ -472,18 +435,23 @@ static ssize_t gnix_cq_readerr(struct fid_cq *cq, struct fi_cq_err_entry *buf,
 
 	cq_priv = container_of(cq, struct gnix_fid_cq, cq_fid);
 
-	if (slist_empty(&cq_priv->err_queue))
-		return -FI_EAGAIN;
-
 	fastlock_acquire(&cq_priv->lock);
 
-	event = container_of(slist_remove_head(&cq_priv->err_queue),
-			     struct gnix_cq_entry, item);
+	entry = _gnix_queue_dequeue(cq_priv->errors);
+	if (!entry) {
+		read_count = -FI_EAGAIN;
+		goto err;
+	}
+
+	event = container_of(entry, struct gnix_cq_entry, item);
 
 	memcpy(buf, event->the_entry, sizeof(struct fi_cq_err_entry));
-	slist_insert_tail(&event->item, &cq_priv->err_free);
+
+	_gnix_queue_enqueue_free(cq_priv->errors, &event->item);
+
 	read_count++;
 
+err:
 	fastlock_release(&cq_priv->lock);
 
 	return read_count;
@@ -522,11 +490,11 @@ static int gnix_cq_control(struct fid *cq, int command, void *arg)
 	}
 }
 
+
 int gnix_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 		 struct fid_cq **cq, void *context)
 {
 	struct gnix_fid_domain *domain_priv;
-	struct gnix_cq_entry *entry;
 	struct gnix_fid_cq *cq_priv;
 	struct fi_ops_cq *cq_ops;
 	struct fi_ops *fi_cq_ops;
@@ -534,6 +502,9 @@ int gnix_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 	int ret = FI_SUCCESS;
 
 	GNIX_TRACE(FI_LOG_CQ, "\n");
+
+	if (!domain)
+		return -FI_EINVAL;
 
 	cq_ops = calloc(1, sizeof(*cq_ops));
 	if (!cq_ops) {
@@ -566,59 +537,47 @@ int gnix_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 		goto err2;
 	}
 
-	cq_priv->domain = domain_priv;
-	cq_priv->attr = *attr;
-	atomic_initialize(&cq_priv->ref_cnt, 0);
-	atomic_inc(&cq_priv->domain->ref_cnt);
-
 	cq_priv->cq_fid.fid.fclass = FI_CLASS_CQ;
 	cq_priv->cq_fid.fid.context = context;
+	cq_priv->domain = domain_priv;
+
 	cq_priv->cq_fid.fid.ops = fi_cq_ops;
 	cq_priv->cq_fid.ops = cq_ops;
 
-	/*
-	 * Although we don't need to store entry_size since we're already
-	 * storing the format, this might provide a performance benefit
-	 * when allocating storage.
-	 */
+	cq_priv->attr = *attr;
+
 	cq_priv->entry_size = format_sizes[cq_priv->attr.format];
 
-	slist_init(&cq_priv->ev_queue);
-	slist_init(&cq_priv->ev_free);
-	slist_init(&cq_priv->err_queue);
-	slist_init(&cq_priv->err_free);
+	atomic_initialize(&cq_priv->ref_cnt, 0);
+	atomic_inc(&cq_priv->domain->ref_cnt);
 
 	ret = gnix_cq_set_wait(cq_priv);
 	if (ret)
-		goto err2;
+		goto err3;
 
 	fastlock_init(&cq_priv->lock);
 
-	fastlock_acquire(&cq_priv->lock);
+	ret = _gnix_queue_create(&cq_priv->events, alloc_cq_entry,
+				 free_cq_entry, cq_priv->entry_size,
+				 cq_priv->attr.size);
+	if (ret)
+		goto err4;
 
-	for (int i = 0; i < attr->size; i++) {
-		entry = alloc_cq_entry(cq_priv->entry_size);
-		if (!entry) {
-			GNIX_WARN(FI_LOG_CQ, "Out of memory.\n");
-			ret = -FI_ENOMEM;
-			goto err3;
-		}
-
-		slist_insert_tail(&entry->item, &cq_priv->ev_free);
-	}
-
-	fastlock_release(&cq_priv->lock);
+	ret = _gnix_queue_create(&cq_priv->errors, alloc_cq_entry,
+				 free_cq_entry, sizeof(struct fi_cq_err_entry),
+				 0);
+	if (ret)
+		goto err5;
 
 	*cq = &cq_priv->cq_fid;
 	return ret;
 
-/*
- *  TODO: Cleanup allocated CQ entries in the event of FI_ENOMEM
- */
-err3:
+err5:
+	_gnix_queue_destroy(cq_priv->events);
+err4:
 	atomic_dec(&cq_priv->domain->ref_cnt);
-	fastlock_release(&cq_priv->lock);
 	fastlock_destroy(&cq_priv->lock);
+err3:
 	free(cq_priv);
 err2:
 	free(fi_cq_ops);

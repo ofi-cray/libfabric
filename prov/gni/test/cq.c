@@ -30,24 +30,6 @@
  * SOFTWARE.
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <errno.h>
-#include <getopt.h>
-#include <poll.h>
-#include <time.h>
-#include <string.h>
-
-#include <rdma/fabric.h>
-#include <rdma/fi_domain.h>
-#include <rdma/fi_errno.h>
-#include <rdma/fi_endpoint.h>
-#include <rdma/fi_cm.h>
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <inttypes.h>
-
 #include "gnix_cq.h"
 #include "gnix.h"
 
@@ -261,16 +243,17 @@ Test(insertion, single)
 	char input_ctx = 'a';
 	struct fi_cq_entry entry;
 
-	assert(!cq_priv->ev_queue.head);
+	assert(!cq_priv->events->item_list.head);
 
 	_gnix_cq_add_event(cq_priv, &input_ctx, 0, 0, 0, 0, 0);
 
-	assert(cq_priv->ev_queue.head);
-	assert_eq(cq_priv->ev_queue.head, cq_priv->ev_queue.tail);
+	assert(cq_priv->events->item_list.head);
+	assert_eq(cq_priv->events->item_list.head,
+		  cq_priv->events->item_list.tail);
 
 	ret = fi_cq_read(rcq, &entry, 1);
 	assert(ret == 1);
-	assert(!cq_priv->ev_queue.head);
+	assert(!cq_priv->events->item_list.head);
 
 	assert_eq(*(char *) entry.op_context, input_ctx,
 		  "Expected same op_context as inserted.");
@@ -286,8 +269,8 @@ Test(insertion, limit)
 	for (size_t i = 0; i < cq_size; i++)
 		_gnix_cq_add_event(cq_priv, &input_ctx, 0, 0, 0, 0, 0);
 
-	assert(cq_priv->ev_queue.head);
-	assert(!cq_priv->ev_free.head);
+	assert(cq_priv->events->item_list.head);
+	assert(!cq_priv->events->free_list.head);
 
 	_gnix_cq_add_event(cq_priv, &input_ctx, 0, 0, 0, 0, 0);
 
@@ -296,8 +279,8 @@ Test(insertion, limit)
 		assert_eq(ret, 1);
 	}
 
-	assert(!cq_priv->ev_queue.head);
-	assert(cq_priv->ev_free.head);
+	assert(!cq_priv->events->item_list.head);
+	assert(cq_priv->events->free_list.head);
 }
 
 TestSuite(reading, .init = cq_setup, .fini = cq_teardown);
@@ -331,19 +314,19 @@ Test(reading, error)
 	 * By default CQ start out with no error entries and no entries
 	 * in the error entry free list.
 	 */
-	assert(!cq_priv->err_queue.head);
-	assert(!cq_priv->err_free.head);
+	assert(!cq_priv->errors->item_list.head);
+	assert(!cq_priv->errors->free_list.head);
 
 	_gnix_cq_add_error(cq_priv, &input_ctx, flags, len, buf, data, tag,
 			   olen, err, prov_errno, 0);
 
-	assert(cq_priv->err_queue.head);
+	assert(cq_priv->errors->item_list.head);
 
 	ret = fi_cq_read(rcq, &entry, 1);
 	assert_eq(ret, -FI_EAVAIL);
 
-	assert(!cq_priv->ev_queue.head);
-	assert(cq_priv->err_queue.head);
+	assert(!cq_priv->events->item_list.head);
+	assert(cq_priv->errors->item_list.head);
 
 	ret = fi_cq_readerr(rcq, &err_entry, 0);
 	assert_eq(ret, 1);
@@ -352,8 +335,8 @@ Test(reading, error)
 	 * Item should have been removed from error queue and placed on free
 	 * queue.
 	 */
-	assert(!cq_priv->err_queue.head);
-	assert(cq_priv->err_free.head);
+	assert(!cq_priv->errors->item_list.head);
+	assert(cq_priv->errors->free_list.head);
 
 	/*
 	 * Compare structural items...
@@ -378,11 +361,11 @@ Test(cq_msg, single)
 	char input_ctx = 'a';
 	struct fi_cq_msg_entry entry;
 
-	assert(!cq_priv->ev_queue.head);
+	assert(!cq_priv->events->item_list.head);
 
 	_gnix_cq_add_event(cq_priv, &input_ctx, 2, 4, 0, 0, 0);
 
-	assert(cq_priv->ev_queue.head);
+	assert(cq_priv->events->item_list.head);
 
 	ret = fi_cq_read(rcq, &entry, 1);
 	assert_eq(ret, 1);
@@ -391,7 +374,7 @@ Test(cq_msg, single)
 	assert_eq(*(char *) entry.op_context, input_ctx);
 	assert_eq(entry.len, 4);
 
-	assert(!cq_priv->ev_queue.head);
+	assert(!cq_priv->events->item_list.head);
 }
 
 /*
@@ -410,14 +393,14 @@ Test(cq_msg, fill)
 	size_t len = 4;
 	const size_t cq_size = cq_priv->attr.size;
 
-	assert(!cq_priv->ev_queue.head);
-	assert(cq_priv->ev_free.head);
+	assert(!cq_priv->events->item_list.head);
+	assert(cq_priv->events->free_list.head);
 
 	for (size_t i = 0; i < cq_size; i++)
 		_gnix_cq_add_event(cq_priv, &input_ctx, flags, len, 0, 0, 0);
 
-	assert(cq_priv->ev_queue.head);
-	assert(!cq_priv->ev_free.head);
+	assert(cq_priv->events->item_list.head);
+	assert(!cq_priv->events->free_list.head);
 
 	_gnix_cq_add_event(cq_priv, &input_ctx, flags * 2, len * 2, 0, 0, 0);
 
@@ -436,7 +419,7 @@ Test(cq_msg, fill)
 	 */
 	_gnix_cq_add_error(cq_priv, &input_ctx, flags, len, 0, 0, 0, 0, 0, 0,
 			   0);
-	assert(cq_priv->err_queue.head);
+	assert(cq_priv->errors->item_list.head);
 
 	ret = fi_cq_read(rcq, &entry, 1);
 	assert_eq(ret, -FI_EAVAIL);
@@ -448,14 +431,14 @@ Test(cq_msg, fill)
 	 * Creating an error allocs an error but it is then placed in the free
 	 * list after reading.
 	 */
-	assert(cq_priv->err_free.head);
-	assert(!cq_priv->err_queue.head);
+	assert(cq_priv->errors->free_list.head);
+	assert(!cq_priv->errors->item_list.head);
 
 	ret = fi_cq_read(rcq, &entry, 1);
 	assert_eq(ret, 1);
 
-	assert(cq_priv->ev_free.head);
-	assert(!cq_priv->ev_queue.head);
+	assert(cq_priv->events->free_list.head);
+	assert(!cq_priv->events->item_list.head);
 
 	assert_eq(*(char *) entry.op_context, input_ctx);
 	assert_eq(entry.len, (len * 2));
@@ -468,13 +451,13 @@ Test(cq_msg, multi_read)
 	size_t count = 3;
 	struct fi_cq_msg_entry entry[count];
 
-	assert(cq_priv->ev_free.head);
-	assert(!cq_priv->ev_queue.head);
+	assert(cq_priv->events->free_list.head);
+	assert(!cq_priv->events->item_list.head);
 
 	for (size_t i = 0; i < count; i++)
 		_gnix_cq_add_event(cq_priv, 0, (uint64_t) i, 0, 0, 0, 0);
 
-	assert(cq_priv->ev_queue.head);
+	assert(cq_priv->events->item_list.head);
 
 	ret = fi_cq_read(rcq, &entry, count);
 	assert_eq(ret, count);

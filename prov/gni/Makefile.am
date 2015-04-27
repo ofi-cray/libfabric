@@ -13,6 +13,7 @@ _gni_files = \
 	prov/gni/src/gnix_init.c \
 	prov/gni/src/gnix_fabric.c \
 	prov/gni/src/gnix_dom.c \
+	prov/gni/src/gnix_queue.c \
 	prov/gni/src/gnix_ep.c \
 	prov/gni/src/gnix_cq.c \
 	prov/gni/src/gnix_av.c \
@@ -35,7 +36,8 @@ gnitest_SOURCES = \
 	prov/gni/test/utils.c \
 	prov/gni/test/wait.c \
 	prov/gni/test/datagram.c \
-	prov/gni/test/bitmap.c
+	prov/gni/test/bitmap.c \
+	prov/gni/test/queue.c
 
 gnitest_LDFLAGS = -static
 gnitest_CPPFLAGS = $(AM_CPPFLAGS)

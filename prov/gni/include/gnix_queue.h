@@ -30,55 +30,45 @@
  * SOFTWARE.
  */
 
-#ifndef _GNIX_CQ_H_
-#define _GNIX_CQ_H_
+#ifndef _GNIX_QUEUE_H
+#define _GNIX_QUEUE_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include <fi.h>
+#include <fi_list.h>
 
-#include "gnix_queue.h"
-#include "gnix_wait.h"
+typedef struct slist_entry *(*alloc_func)(size_t entry_size);
+typedef void (*free_func)(struct slist_entry *item);
 
-#define GNIX_CQ_DEFAULT_FORMAT struct fi_cq_entry
-#define GNIX_CQ_DEFAULT_SIZE   256
+struct gnix_queue {
+	struct slist item_list;
+	struct slist free_list;
 
-struct gnix_cq_entry {
-	void *the_entry;
-	fi_addr_t source;
-	struct slist_entry item;
-};
+	alloc_func alloc_item;
+	free_func free_item;
 
-struct gnix_fid_cq {
-	struct fid_cq cq_fid;
-	struct gnix_fid_domain *domain;
-
-	struct gnix_queue *events;
-	struct gnix_queue *errors;
-
-	struct fi_cq_attr attr;
 	size_t entry_size;
-
-	struct fid_wait *wait;
-
-	fastlock_t lock;
-	atomic_t ref_cnt;
 };
 
+int _gnix_queue_create(struct gnix_queue **queue, alloc_func alloc_item,
+		       free_func free_item, size_t entry_size,
+		       size_t entry_count);
+void _gnix_queue_destroy(struct gnix_queue *queue);
 
-ssize_t _gnix_cq_add_event(struct gnix_fid_cq *cq, void *op_context,
-			  uint64_t flags, size_t len, void *buf,
-			  uint64_t data, uint64_t tag);
+struct slist_entry *_gnix_queue_peek(struct gnix_queue *queue);
 
-ssize_t _gnix_cq_add_error(struct gnix_fid_cq *cq, void *op_context,
-			  uint64_t flags, size_t len, void *buf,
-			  uint64_t data, uint64_t tag, size_t olen,
-			  int err, int prov_errno, void *err_data);
+struct slist_entry *_gnix_queue_get_free(struct gnix_queue *queue);
+struct slist_entry *_gnix_queue_dequeue(struct gnix_queue *queue);
+struct slist_entry *_gnix_queue_dequeue_free(struct gnix_queue *queue);
+
+void _gnix_queue_enqueue(struct gnix_queue *queue, struct slist_entry *item);
+void _gnix_queue_enqueue_free(struct gnix_queue *queue,
+			      struct slist_entry *item);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif
+#endif /* #define _GNIX_QUEUE_H */

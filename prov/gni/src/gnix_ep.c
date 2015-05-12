@@ -531,6 +531,7 @@ int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
 	if (!ep_priv)
 		return -FI_ENOMEM;
 
+	BIG BAD FOOBAR
 	ep_priv->ep_fid.fid.fclass = FI_CLASS_EP;
 	ep_priv->ep_fid.fid.context = context;
 

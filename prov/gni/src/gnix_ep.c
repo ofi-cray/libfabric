@@ -532,6 +532,7 @@ int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
 		return -FI_ENOMEM;
 
 	BIG BAD FOOBAR
+		TRYAGAIN WITH WORSE STUFF
 	ep_priv->ep_fid.fid.fclass = FI_CLASS_EP;
 	ep_priv->ep_fid.fid.context = context;
 

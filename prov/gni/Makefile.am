@@ -33,6 +33,9 @@ _gni_files = \
 	prov/gni/src/gnix_mbox_allocator.c
 
 if HAVE_CRITERION
+# This allows the provider to provide additional functionality for unit testing
+AM_CFLAGS += -DHAVE_CRITERION
+
 bin_PROGRAMS = gnitest
 gnitest_SOURCES = \
 	prov/gni/test/cq.c \
@@ -43,7 +46,8 @@ gnitest_SOURCES = \
 	prov/gni/test/queue.c \
 	prov/gni/test/eq.c \
 	prov/gni/test/hashtable.c \
-	prov/gni/test/allocator.c
+	prov/gni/test/allocator.c \
+	prov/gni/test/fab_req.c
 
 gnitest_LDFLAGS = -static
 gnitest_CPPFLAGS = $(AM_CPPFLAGS)

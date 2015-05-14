@@ -419,6 +419,161 @@ ssize_t gnix_ep_tsenddata(struct fid_ep *ep, const void *buf, size_t len,
 	return -FI_ENOSYS;
 }
 
+/* gnix_fab_req freelist functions
+ *
+ * NOTES:
+ * - NOT THREAD-SAFE (do they need to be?)
+ * - Does not shrink
+ * - Refill size doubles each time growth is needed
+ * - Refills are allocated as chunks, which are managed by fab_req_chunks
+ *
+ */
+
+static int __fab_req_freelist_init(struct gnix_fid_ep *ep,
+				   int nreqs, bool init)
+{
+	int i, ret = FI_SUCCESS;
+	struct gnix_fab_req *reqs;
+	struct gnix_fab_req_freelist *fl;
+
+	assert(ep);
+	assert(nreqs > 0);
+	/*
+	 * We allocate 1 extra gnix_fab_req for use as the pointer to
+	 * the memory chunk maintained in fab_req_chunks for later
+	 * freeing.  If gnix_fab_req gets too fat, consider manually
+	 * allocating the slist_entry.
+	 */
+	reqs = calloc(nreqs+1, sizeof(struct gnix_fab_req));
+	if (reqs == NULL) {
+		ret = -FI_ENOMEM;
+		goto err;
+	}
+
+	fl = &ep->fab_req_freelist;
+	if (init) {
+		assert(slist_empty(&fl->freelist));
+		slist_init(&fl->freelist);
+		assert(slist_empty(&fl->chunks));
+		slist_init(&fl->chunks);
+		fl->refill_size = GNIX_FAB_RQ_FL_INIT_REFILL_SIZE;
+	}
+
+	/* Use the first entry to save the chunk for freeing */
+	slist_insert_tail(&reqs[0].slist, &fl->chunks);
+
+	/* Start using the 2nd entry */
+	reqs++;
+
+	for (i = 0; i < nreqs; i++) {
+		reqs[i].gnix_ep = ep;
+		/* What else need to be initialized here? */
+		slist_insert_tail(&reqs[i].slist, &fl->freelist);
+	}
+err:
+	return ret;
+}
+
+static void __fab_req_freelist_destroy(struct gnix_fid_ep *ep)
+{
+	assert(ep);
+
+	struct slist_entry *chunk;
+	struct gnix_fab_req_freelist *fl = &ep->fab_req_freelist;
+
+	for (chunk = slist_remove_head(&fl->chunks);
+	     chunk != NULL;
+	     chunk = slist_remove_head(&fl->chunks)) {
+		free(chunk);
+	}
+}
+
+static int __fab_req_alloc(struct gnix_fid_ep *ep,
+			   struct gnix_fab_req **req)
+{
+	int ret = FI_SUCCESS;
+
+	assert(ep);
+
+	struct gnix_fab_req_freelist *fl = &ep->fab_req_freelist;
+	struct slist_entry *e = slist_remove_head(&fl->freelist);
+
+	if (!e) {
+		ret = __fab_req_freelist_init(ep, fl->refill_size,
+					      false /* no init */);
+		if (ret != FI_SUCCESS)
+			goto err;
+		if (fl->refill_size < GNIX_FAB_RQ_FL_MAX_REFILL_SIZE) {
+			int ns = fl->refill_size *=
+				GNIX_FAB_RQ_FL_REFILL_GROWTH_FACTOR;
+			fl->refill_size =
+				ns > GNIX_FAB_RQ_FL_MAX_REFILL_SIZE ?
+				GNIX_FAB_RQ_FL_MAX_REFILL_SIZE :
+				ns;
+		}
+		e = slist_remove_head(&fl->freelist);
+		if (!e) {
+			/* Can't happen unless multithreaded */
+			ret = -FI_ENOMEM;
+			goto err;
+		}
+	}
+	*req = container_of(e, struct gnix_fab_req, slist);
+	return ret;
+
+err:
+	return ret;
+}
+
+static void __fab_req_free(struct gnix_fab_req *req)
+{
+	assert(req);
+	struct gnix_fid_ep *ep = req->gnix_ep;
+
+	assert(ep);
+	struct gnix_fab_req_freelist *fl = &ep->fab_req_freelist;
+
+	/* What should be freed here? */
+	slist_insert_tail(&req->slist, &fl->freelist);
+}
+
+#ifdef HAVE_CRITERION
+/* Define utility function and wrappers around file static functions
+ * for unit testing
+ */
+
+int __attribute__((unused)) _CT__fab_req_freelist_init(struct gnix_fid_ep *ep,
+						       int nreqs, bool init)
+{
+	return __fab_req_freelist_init(ep, nreqs, init);
+}
+
+void __attribute__((unused))
+_CT__fab_req_freelist_destroy(struct gnix_fid_ep *ep)
+{
+	__fab_req_freelist_destroy(ep);
+}
+
+int __attribute__((unused)) _CT__fab_req_alloc(struct gnix_fid_ep *ep,
+					       struct gnix_fab_req **req)
+{
+	return __fab_req_alloc(ep, req);
+}
+
+void __attribute__((unused)) _CT__fab_req_free(struct gnix_fab_req *req)
+{
+	__fab_req_free(req);
+}
+
+bool __attribute__((unused)) _CT__fab_req_freelist_empty(struct gnix_fid_ep *ep)
+{
+	assert(ep);
+	struct gnix_fab_req_freelist *fl = &ep->fab_req_freelist;
+
+	return slist_empty(&fl->freelist);
+}
+
+#endif
 /*******************************************************************************
  * Base EP API function implementations.
  ******************************************************************************/
@@ -452,6 +607,16 @@ static int gnix_ep_close(fid_t fid)
 	 */
 	ret = _gnix_nic_free(nic);
 	ep->nic = NULL;
+
+	/*
+	 * Free fab_reqs
+	 */
+	if (atomic_get(&ep->active_fab_reqs) != 0) {
+		/* Should we just assert here? */
+		GNIX_WARN(FI_LOG_EP_CTRL,
+			  "Active requests while closing an endpoint.");
+	}
+	__fab_req_freelist_destroy(ep);
 
 	free(ep);
 
@@ -539,6 +704,11 @@ int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
 	ep_priv->domain = domain_priv;
 	ep_priv->type = info->ep_attr->type;
 	atomic_initialize(&ep_priv->active_fab_reqs, 0);
+	ret = __fab_req_freelist_init(ep_priv,
+				      GNIX_FAB_RQ_FL_INIT_SIZE,
+				      true /* init list */);
+	if (ret != FI_SUCCESS)
+		goto err;
 
 	ep_priv->ep_fid.msg = &gnix_ep_msg_ops;
 	ep_priv->ep_fid.rma = &gnix_ep_rma_ops;

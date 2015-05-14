@@ -238,6 +238,23 @@ struct gnix_fid_mem_desc {
 	gni_mem_handle_t mem_hndl;
 };
 
+/* Number of gnix_fab_req to seed the endpoint freelist with */
+#define GNIX_FAB_RQ_FL_INIT_SIZE 100
+/* Initial refill size */
+#define GNIX_FAB_RQ_FL_INIT_REFILL_SIZE 10
+/* Max refill size */
+#define GNIX_FAB_RQ_FL_MAX_REFILL_SIZE GNIX_FAB_RQ_FL_INIT_SIZE
+/* Refill growth factor */
+#define GNIX_FAB_RQ_FL_REFILL_GROWTH_FACTOR 2
+
+struct gnix_fab_req_freelist {
+	/* free list */
+	struct slist freelist;
+	/* memory chunks, must be saved for freeing */
+	struct slist chunks;
+	int refill_size;
+};
+
 /*
  *   gnix endpoint structure
  *
@@ -271,6 +288,9 @@ struct gnix_fid_ep {
 	int (*rx_progress_fn)(struct gnix_fid_ep *, gni_return_t *rc);
 	int enabled;
 	int no_want_cqes;
+
+	/* free list of gnix_fab_req */
+	struct gnix_fab_req_freelist fab_req_freelist;
 	/* num. active fab_reqs associated with this ep */
 	atomic_t active_fab_reqs;
 };
@@ -365,7 +385,6 @@ enum gnix_fab_req_type {
  */
 
 struct gnix_fab_req {
-	struct list_node          list;
 	struct slist_entry        slist;
 	enum gnix_fab_req_type    type;
 	struct gnix_fid_ep        *gnix_ep;

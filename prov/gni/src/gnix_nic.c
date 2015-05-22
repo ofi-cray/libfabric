@@ -52,12 +52,217 @@ static pthread_mutex_t gnix_nic_list_lock = PTHREAD_MUTEX_INITIALIZER;
 uint32_t gnix_def_max_nics_per_ptag = 4;
 
 /*
- * stub for now
+ * function to process GNI CQ TX CQES to progress a gnix_nic
  */
+
+static int __nic_tx_progress(struct gnix_nic *nic)
+{
+	int ret = FI_SUCCESS;
+	int msg_id=0;
+	gni_return_t  status = GNI_RC_NOT_DONE, status2;
+	gni_post_descriptor_t  *gni_desc=NULL;
+	gni_cq_entry_t cqe;
+	struct gnix_tx_descriptor *gnix_tdesc = NULL;
+	unsigned int recov;
+
+	/*
+	 * first see if there are any CQE's on the
+	 * tx cq. Calling GNI_CqTestEvent does not require
+	 * getting the nic lock
+	 */
+
+	status = GNI_CqTestEvent(nic->tx_cq);
+	if (status == GNI_RC_NOT_DONE)
+		return FI_SUCCESS;
+
+try_again:
+	fastlock_acquire(&nic->lock);
+        status = GNI_CqGetEvent(nic->tx_cq, &cqe);
+        if (status  == GNI_RC_NOT_DONE) {
+		fastlock_release(&nic->lock);
+		return FI_SUCCESS;
+	}
+
+	switch (status) {
+	case GNI_RC_SUCCESS:
+		assert(GNI_CQ_STATUS_OK(cqe));
+		/*
+		 * check whether CQE from SMSG or a Post
+		 * transaction
+		 */
+		if (GNI_CQ_GET_TYPE(cqe)
+				== GNI_CQ_EVENT_TYPE_POST) {
+			status2 = GNI_GetCompleted(nic->tx_cq, cqe, &gni_desc);
+			if ((status2 != GNI_RC_SUCCESS) &&
+				(status2 != GNI_RC_TRANSACTION_ERROR)) {
+				ret = gnixu_to_fi_errno(status2);
+			}
+			gnix_tdesc = container_of(gni_desc,
+						struct gnix_tx_descriptor,
+						desc.gni_desc);
+		}  else if (GNI_CQ_GET_TYPE(cqe)
+			    == GNI_CQ_EVENT_TYPE_SMSG) {
+			msg_id = GNI_CQ_GET_MSG_ID(cqe);
+			gnix_tdesc = gnix_desc_lkup_by_id(nic,msg_id);
+			if (gnix_tdesc == NULL)
+				ret = -FI_ENOENT;
+		} else {
+			assert(0);   /* TODO: something better -unexpected event type */
+		}
+
+		fastlock_release(&nic->lock);
+		if (ret == FI_SUCCESS) {
+			if (gnix_tdesc->desc.completer_func) {
+				ret =
+				   gnix_tdesc->desc.completer_func(gnix_tdesc);
+				if (ret)
+					goto err;
+                        }
+                        ret = _gnix_nic_tx_free(nic, gnix_tdesc);
+			if (ret)
+				goto err;
+		}
+		break;
+
+	case GNI_RC_TRANSACTION_ERROR: /* uh oh, a hiccup in the network,
+					stupid user, etc. */
+		/* this shouldn't happen SMSG */
+		if (GNI_CQ_GET_TYPE(cqe) == GNI_CQ_EVENT_TYPE_SMSG) {
+			char ebuf[512];
+			GNI_CqErrorStr(cqe, ebuf, sizeof(ebuf));
+			GNIX_WARN(FI_LOG_EP_DATA,
+				  "CQ error statusfor GNI_SmsgSend - %s\n",
+				  ebuf);
+			goto err1;
+		}
+		status2 = GNI_GetCompleted(nic->tx_cq, cqe, &gni_desc);
+		fastlock_release(&nic->lock);
+		gnix_tdesc = container_of(gni_desc,
+					struct gnix_tx_descriptor,
+					desc.gni_desc);
+		if ((status2 != GNI_RC_SUCCESS) &&
+			(status2 != GNI_RC_TRANSACTION_ERROR)) {
+			ret = gnixu_to_fi_errno(status2);
+			goto err;
+		}
+		/*
+ 		 * TODO: need to allow for recover of failed transactions
+ 		 */
+		status = GNI_CqErrorRecoverable(cqe,&recov);
+		if ((status == GNI_RC_SUCCESS) && !recov) {
+			char ebuf[512];
+			GNI_CqErrorStr(cqe, ebuf, sizeof(ebuf));
+			GNIX_WARN(FI_LOG_EP_DATA,
+				  "CQ error statusfor GNI_Post - %s\n",
+				  ebuf);
+			goto err;
+		}
+
+		break;
+
+	default:
+		assert(0);  /* TODO: better error later */
+	}
+
+	/*
+	 * keep on dequeuing until we get GNI_RC_NOT_DONE
+	 */
+
+	goto try_again;
+err1:
+	fastlock_release(&nic->lock);
+err:
+	return ret;
+
+}
+
+/*
+ * process an RX CQEs for this nic
+ */
+static int __nic_rx_progress(struct gnix_nic *nic)
+{
+	return -FI_ENOSYS;
+}
 
 int _gnix_nic_progress(struct gnix_nic *nic)
 {
-	return FI_SUCCESS;
+	int ret = FI_SUCCESS;
+	int complete;
+	struct gnix_work_req *p = NULL;
+
+	ret =  __nic_tx_progress(nic);
+	if (ret != FI_SUCCESS)
+		return ret;
+
+	ret = __nic_rx_progress(nic);
+	if (ret != FI_SUCCESS)
+		return ret;
+
+	/*
+	 * see what's going in the work queue
+	 */
+
+check_again:
+	if (list_empty(&nic->nic_wq))
+		return ret;
+
+	fastlock_acquire(&nic->wq_lock);
+	p = list_top(&nic->nic_wq, struct gnix_work_req, list);
+	if (p == NULL) {
+		fastlock_release(&nic->wq_lock);
+		return ret;
+	}
+
+	gnix_list_del_init(&p->list);
+	fastlock_release(&nic->wq_lock);
+
+	assert(p->progress_func);
+
+	ret = p->progress_func(p->data, &complete);
+	if (ret != FI_SUCCESS) {
+		GNIX_WARN(FI_LOG_EP_DATA,
+			  "progress_func returned with erro - %d\n",
+			  ret );
+		goto err;
+	}
+
+	if (complete == 1) {
+		if (p->completer_func) {
+			ret = p->completer_func(p->completer_data);
+			free(p);
+			if (ret != FI_SUCCESS)
+				goto err;
+		}
+		goto check_again;  /* we're getting stuff done, try again */
+	} else {
+		fastlock_acquire(&nic->wq_lock);
+		list_add_tail(&nic->nic_wq, &p->list);
+		fastlock_release(&nic->wq_lock);
+	}
+
+err:
+	return ret;
+}
+
+/*
+ * allocate a tx desc for this nic
+ */
+
+int _gnix_nic_tx_alloc(struct gnix_nic *nic,
+		       struct gnix_tx_descriptor **desc)
+{
+	return -FI_ENOSYS;
+}
+
+/*
+ * free a tx desc for this nic - the nic is not embedded in the
+ * descriptor to help keep it small
+ */
+
+int _gnix_nic_tx_free(struct gnix_nic *nic,
+			struct gnix_tx_descriptor *desc)
+{
+	return -FI_ENOSYS;
 }
 
 /*

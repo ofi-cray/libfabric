@@ -127,8 +127,8 @@ union gnix_tx_descriptor0 {
 		struct list_node          list;
 		gni_post_descriptor_t       gni_desc;
 		struct gnix_smsg_descriptor gnix_smsg_desc;
-		struct gnix_vc *vc;
-		struct gnix_fid_ep *ep;
+		struct gnix_fab_req *req;
+		int  (*completer_func)(void *);
 		int id;
 	};
 	char padding[GNIX_CACHELINE_SIZE];
@@ -150,6 +150,9 @@ extern uint32_t gnix_def_max_nics_per_ptag;
  * prototypes
  */
 
+int _gnix_nic_tx_freelist_init(struct gnix_nic *nic, int n_descs);
+int _gnix_nic_tx_alloc(struct gnix_nic *nic, struct gnix_tx_descriptor **tdesc);
+int _gnix_nic_tx_free(struct gnix_nic *nic, struct gnix_tx_descriptor *tdesc);
 int _gnix_nic_free(struct gnix_nic *nic);
 int gnix_nic_alloc(struct gnix_fid_domain *domain,
 			struct gnix_nic **nic_ptr);

@@ -75,9 +75,9 @@ static inline void dlist_remove_init(struct dlist_entry *e)
 
 #define dlist_for_each_safe(h, e, n, member)				\
 	for (e = dlist_first_entry(h, typeof(*e), member),		\
-		     n = dlist_entry((&e->member)->next,		\
-				     typeof(*e), member);		\
-	     &e->member != h;						\
+		     n = e ? dlist_entry((&e->member)->next,		\
+					 typeof(*e), member) : NULL;	\
+	     e && (&e->member != h);					\
 	     e = n, n = dlist_entry((&e->member)->next, typeof(*e), member))
 
 /*

@@ -47,6 +47,7 @@ gnitest_SOURCES = \
 	prov/gni/test/queue.c \
 	prov/gni/test/eq.c \
 	prov/gni/test/freelist.c \
+	prov/gni/test/dlist-utils.c \
 	prov/gni/test/hashtable.c \
 	prov/gni/test/allocator.c \
 	prov/gni/test/mr.c \

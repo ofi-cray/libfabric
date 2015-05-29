@@ -40,6 +40,9 @@
  * prototypes for GNI EP internal implementation
  */
 
+struct gnix_fab_req *_fr_alloc(struct gnix_fid_ep *ep);
+void _fr_free(struct gnix_fid_ep *ep, struct gnix_fab_req *fr);
+
 /*
  * typedefs for function vectors used to steer send/receive/rma/amo requests,
  * i.e. fi_send, fi_recv, etc. to ep type specific methods

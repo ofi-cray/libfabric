@@ -258,7 +258,17 @@ err:
 int _gnix_nic_tx_alloc(struct gnix_nic *nic,
 		       struct gnix_tx_descriptor **desc)
 {
-	return -FI_ENOSYS;
+	struct dlist_entry *entry;
+
+	if (dlist_empty(&nic->tx_desc_free_list))
+		return -FI_ENOSPC;
+
+	entry = nic->tx_desc_free_list.next;
+	dlist_remove_init(entry);
+	dlist_insert_head(entry, &nic->tx_desc_active_list);
+	*desc = dlist_entry(entry, struct gnix_tx_descriptor, desc.list);
+
+	return 0;
 }
 
 /*
@@ -267,9 +277,12 @@ int _gnix_nic_tx_alloc(struct gnix_nic *nic,
  */
 
 int _gnix_nic_tx_free(struct gnix_nic *nic,
-			struct gnix_tx_descriptor *desc)
+		      struct gnix_tx_descriptor *desc)
 {
-	return -FI_ENOSYS;
+	dlist_remove_init(&desc->desc.list);
+	dlist_insert_head(&desc->desc.list, &nic->tx_desc_free_list);
+
+	return 0;
 }
 
 /*
@@ -293,14 +306,14 @@ static int __gnix_nic_tx_freelist_init(struct gnix_nic *nic, int n_descs)
 		goto err;
 	}
 
-	list_head_init(&nic->tx_desc_free_list);
-	list_head_init(&nic->tx_desc_active_list);
+	dlist_init(&nic->tx_desc_free_list);
+	dlist_init(&nic->tx_desc_active_list);
 
-	for (i = 0, desc_ptr = desc_base; i < n_descs; i++) {
+	for (i = 0, desc_ptr = desc_base; i < n_descs; i++, desc_ptr++) {
 		desc_ptr->desc.id = i;
-		gnix_list_node_init(&desc_ptr->desc.list);
-		list_add_tail(&nic->tx_desc_free_list,
-				&desc_ptr->desc.list);
+		dlist_init(&desc_ptr->desc.list);
+		dlist_insert_tail(&desc_ptr->desc.list,
+				  &nic->tx_desc_free_list);
 	}
 
 	nic->max_tx_desc_id = n_descs - 1;

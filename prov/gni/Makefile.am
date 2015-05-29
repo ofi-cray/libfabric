@@ -33,7 +33,9 @@ _gni_files = \
 	prov/gni/src/gnix_freelist.c \
 	prov/gni/src/gnix_bitmap.c \
 	prov/gni/src/gnix_hashtable.c \
-	prov/gni/src/gnix_mbox_allocator.c
+	prov/gni/fasthash/fasthash.c \
+	prov/gni/src/gnix_mbox_allocator.c \
+	prov/gni/src/gnix_rma.c
 
 if HAVE_CRITERION
 bin_PROGRAMS = prov/gni/test/gnitest
@@ -53,7 +55,8 @@ prov_gni_test_gnitest_SOURCES = \
 	prov/gni/test/hashtable.c \
 	prov/gni/test/allocator.c \
 	prov/gni/test/mr.c \
-	prov/gni/test/vc.c
+	prov/gni/test/vc.c \
+	prov/gni/test/rdm_rw.c
 
 prov_gni_test_gnitest_LDFLAGS = -static
 prov_gni_test_gnitest_CPPFLAGS = $(AM_CPPFLAGS)

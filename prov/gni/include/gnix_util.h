@@ -71,7 +71,7 @@ static inline void dlist_remove_init(struct dlist_entry *e)
 #define dlist_entry(e, type, member) container_of(e, type, member)
 
 #define dlist_first_entry(h, type, member)				\
-	(dlist_empty(h) ? NULL : dlist_entry((h)->next, type, member))
+	dlist_entry((h)->next, type, member)
 
 #define dlist_for_each_safe(h, e, n, member)				\
 	for (e = dlist_first_entry(h, typeof(*e), member),		\

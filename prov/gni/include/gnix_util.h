@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2015 Los Alamos National Security, LLC. All rights reserved.
- * Copyright (c) 2015 Cray Inc. All rights reserved.
+o * Copyright (c) 2015 Cray Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -75,9 +75,9 @@ static inline void dlist_remove_init(struct dlist_entry *e)
 
 #define dlist_for_each_safe(h, e, n, member)				\
 	for (e = dlist_first_entry(h, typeof(*e), member),		\
-		     n = dlist_entry((&e->member)->next,		\
-				     typeof(*e), member);		\
-	     &e->member != h;						\
+		     n = e ? dlist_entry((&e->member)->next,		\
+					 typeof(*e), member) : NULL;	\
+	     e && (&e->member != h);					\
 	     e = n, n = dlist_entry((&e->member)->next, typeof(*e), member))
 
 /*

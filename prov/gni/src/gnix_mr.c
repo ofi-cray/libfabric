@@ -44,6 +44,8 @@
 #include "gnix_priv.h"
 #include "common/atomics.h"
 
+#define PAGE_SHIFT 12
+
 /* forward declarations */
 static int __mr_cache_register(
 		gnix_mr_cache_t          *cache,

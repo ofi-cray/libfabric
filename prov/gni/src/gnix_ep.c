@@ -533,6 +533,7 @@ static int gnix_ep_close(fid_t fid)
 	struct gnix_nic *nic;
 	struct gnix_vc *vc;
 	struct gnix_fid_av *av;
+	struct gnix_fid_cq *cq;
 	struct gnix_cm_nic *cm_nic;
 	struct dlist_entry *p, *head;
 
@@ -558,6 +559,27 @@ static int gnix_ep_close(fid_t fid)
 	av = ep->av;
 	if (av != NULL)
 		atomic_dec(&av->ref_cnt);
+
+	cq = ep->send_cq;
+	if (cq != NULL) {
+		ret = _gnix_cq_poll_nic_rem(cq, nic);
+		if (ret != FI_SUCCESS)
+			GNIX_WARN(FI_LOG_EP_CTRL,
+				  "_gnix_cq_poll_nic_rem returned %d\n",
+				  ret);
+		atomic_dec(&cq->ref_cnt);
+	}
+
+
+	cq = ep->recv_cq;
+	if (cq != NULL) {
+		ret = _gnix_cq_poll_nic_rem(cq, nic);
+		if (ret != FI_SUCCESS)
+			GNIX_WARN(FI_LOG_EP_CTRL,
+				  "_gnix_cq_poll_nic_rem returned %d\n",
+				  ret);
+		atomic_dec(&cq->ref_cnt);
+	}
 
 	/*
 	 * destroy any wildcard vc's

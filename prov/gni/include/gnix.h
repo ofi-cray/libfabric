@@ -276,7 +276,8 @@ struct gnix_fid_ep {
 	/* RX specific progress fn */
 	int (*rx_progress_fn)(struct gnix_fid_ep *, gni_return_t *rc);
 	int enabled;
-	int no_want_cqes;
+	int send_selective_completion;
+	int recv_selective_completion;
 	/* num. active read and write fab_reqs associated with this ep */
 	atomic_t active_fab_reqs;
 	struct gnix_s_freelist fr_freelist;
@@ -324,7 +325,6 @@ enum gnix_fab_req_type {
 	GNIX_FAB_RQ_TRECV
 };
 
-
 /*
  * Fabric request layout, there is a one to one
  * correspondence between an application's invocation of fi_send, fi_recv
@@ -339,19 +339,26 @@ struct gnix_fab_req {
 	void                      *user_context;
 	/* matched_rcv_fab_req only applicable to GNIX_FAB_RQ_RECV type */
 	struct gnix_fab_req       *matched_rcv_fab_req;
-	void     *buf;
 	/* current point in the buffer for next transfer chunk -
 	   case of long messages or rdma requests greater than 4 GB */
 	void     *cur_pos;
-	size_t   len;
 	uint64_t imm;
-	uint64_t tag;
 	struct gnix_vc *vc;
 	void *completer_data;
-	int (*completer_func)(void *,int *);
+	int (*completer_func)(void *);
 	int modes;
 	int retries;
 	uint32_t id;
+
+	/* RMA stuff */
+	uint64_t loc_addr;
+	void *loc_md;
+	uint64_t rem_addr;
+	uint64_t rem_mr_key;
+	size_t len;
+	uint64_t flags;
+	uint64_t data;
+	uint64_t tag;
 };
 
 /*

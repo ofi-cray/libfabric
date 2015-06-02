@@ -75,7 +75,7 @@ static void __fr_freelist_destroy(struct gnix_fid_ep *ep)
 	_gnix_sfl_destroy(&ep->fr_freelist);
 }
 
-static struct gnix_fab_req *__fr_alloc(struct gnix_fid_ep *ep)
+struct gnix_fab_req *_fr_alloc(struct gnix_fid_ep *ep)
 {
 	struct slist_entry *se;
 	struct gnix_fab_req *fr = NULL;
@@ -92,7 +92,7 @@ static struct gnix_fab_req *__fr_alloc(struct gnix_fid_ep *ep)
 	return fr;
 }
 
-static void __fr_free(struct gnix_fid_ep *ep, struct gnix_fab_req *fr)
+void _fr_free(struct gnix_fid_ep *ep, struct gnix_fab_req *fr)
 {
 	assert(fr->gnix_ep == ep);
 	_gnix_sfe_free(&fr->slist, &ep->fr_freelist);
@@ -533,6 +533,7 @@ static int gnix_ep_close(fid_t fid)
 	struct gnix_nic *nic;
 	struct gnix_vc *vc;
 	struct gnix_fid_av *av;
+	struct gnix_fid_cq *cq;
 	struct gnix_cm_nic *cm_nic;
 	struct dlist_entry *p, *head;
 
@@ -541,6 +542,8 @@ static int gnix_ep_close(fid_t fid)
 
 	ep = container_of(fid, struct gnix_fid_ep, ep_fid.fid);
 	/* TODO: lots more stuff to do here */
+
+	/* detach from CQs, remove NICs from poll list */
 
 	domain = ep->domain;
 	assert(domain != NULL);
@@ -556,6 +559,27 @@ static int gnix_ep_close(fid_t fid)
 	av = ep->av;
 	if (av != NULL)
 		atomic_dec(&av->ref_cnt);
+
+	cq = ep->send_cq;
+	if (cq != NULL) {
+		ret = _gnix_cq_poll_nic_rem(cq, nic);
+		if (ret != FI_SUCCESS)
+			GNIX_WARN(FI_LOG_EP_CTRL,
+				  "_gnix_cq_poll_nic_rem returned %d\n",
+				  ret);
+		atomic_dec(&cq->ref_cnt);
+	}
+
+
+	cq = ep->recv_cq;
+	if (cq != NULL) {
+		ret = _gnix_cq_poll_nic_rem(cq, nic);
+		if (ret != FI_SUCCESS)
+			GNIX_WARN(FI_LOG_EP_CTRL,
+				  "_gnix_cq_poll_nic_rem returned %d\n",
+				  ret);
+		atomic_dec(&cq->ref_cnt);
+	}
 
 	/*
 	 * destroy any wildcard vc's
@@ -634,14 +658,17 @@ static int gnix_ep_bind(fid_t fid, struct fid *bfid, uint64_t flags)
 		}
 		if (flags & FI_SEND) {
 			ep->send_cq = cq;
+			if (flags & FI_SELECTIVE_COMPLETION)
+				ep->send_selective_completion = 1;
 		}
 		if (flags & FI_RECV) {
 			ep->recv_cq = cq;
-		}
-		if (flags & FI_COMPLETION) {
-			ep->no_want_cqes = 1;
+			if (flags & FI_SELECTIVE_COMPLETION)
+				ep->recv_selective_completion = 1;
 		}
 		atomic_inc(&cq->ref_cnt);
+
+		_gnix_cq_poll_nic_add(cq, ep->nic);
 		break;
 	case FI_CLASS_AV:
 		av = container_of(bfid, struct gnix_fid_av, av_fid.fid);

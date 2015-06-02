@@ -45,6 +45,7 @@ extern "C" {
 #include "gnix.h"
 #include "gnix_bitmap.h"
 #include "gnix_mbox_allocator.h"
+#include <fi_list.h>
 #include <assert.h>
 
 /*
@@ -75,8 +76,8 @@ extern "C" {
  */
 
 struct gnix_nic {
-	struct list_node list;
-	struct list_node gnix_nic_list;
+	struct list_node list;          /* global NIC list */
+	struct list_node gnix_nic_list; /* domain list */
 	fastlock_t lock;
 	gni_cdm_handle_t gni_cdm_hndl;
 	gni_nic_handle_t gni_nic_hndl;
@@ -84,8 +85,8 @@ struct gnix_nic {
 	gni_cq_handle_t rx_cq_blk;
 	gni_cq_handle_t tx_cq;
 	gni_cq_handle_t tx_cq_blk;
-	struct list_head tx_desc_active_list;
-	struct list_head tx_desc_free_list;
+	struct dlist_entry tx_desc_active_list;
+	struct dlist_entry tx_desc_free_list;
 	struct gnix_tx_descriptor *tx_desc_base;
 	atomic_t outstanding_fab_reqs_nic;
 	fastlock_t wq_lock;
@@ -124,11 +125,11 @@ struct gnix_smsg_descriptor {
 
 union gnix_tx_descriptor0 {
 	struct {
-		struct list_node          list;
+		struct dlist_entry          list;
 		gni_post_descriptor_t       gni_desc;
 		struct gnix_smsg_descriptor gnix_smsg_desc;
-		struct gnix_vc *vc;
-		struct gnix_fid_ep *ep;
+		struct gnix_fab_req *req;
+		int  (*completer_func)(void *);
 		int id;
 	};
 	char padding[GNIX_CACHELINE_SIZE];
@@ -150,6 +151,9 @@ extern uint32_t gnix_def_max_nics_per_ptag;
  * prototypes
  */
 
+int _gnix_nic_tx_freelist_init(struct gnix_nic *nic, int n_descs);
+int _gnix_nic_tx_alloc(struct gnix_nic *nic, struct gnix_tx_descriptor **tdesc);
+int _gnix_nic_tx_free(struct gnix_nic *nic, struct gnix_tx_descriptor *tdesc);
 int _gnix_nic_free(struct gnix_nic *nic);
 int gnix_nic_alloc(struct gnix_fid_domain *domain,
 			struct gnix_nic **nic_ptr);

@@ -40,6 +40,7 @@
 
 #include "gnix.h"
 #include "gnix_cq.h"
+#include "gnix_nic.h"
 
 /*******************************************************************************
  * Function pointer for filling specific entry format type.
@@ -247,6 +248,23 @@ err:
 	return NULL;
 }
 
+static int __gnix_cq_progress(struct gnix_fid_cq *cq)
+{
+	struct gnix_cq_poll_nic *pnic, *tmp;
+	int rc;
+
+	dlist_for_each_safe(&cq->poll_nics, pnic, tmp, list) {
+		GNIX_INFO(FI_LOG_CQ, "progressing nic %p\n", pnic->nic);
+		rc = _gnix_nic_progress(pnic->nic);
+		if (rc) {
+			GNIX_WARN(FI_LOG_CQ,
+				  "_gnix_nic_progress failed: %d\n", rc);
+		}
+	}
+
+	return FI_SUCCESS;
+}
+
 
 /*******************************************************************************
  * Exposed helper functions
@@ -327,6 +345,54 @@ err:
 	return ret;
 }
 
+int _gnix_cq_poll_nic_add(struct gnix_fid_cq *cq, struct gnix_nic *nic)
+{
+	struct gnix_cq_poll_nic *pnic, *tmp;
+
+	GNIX_TRACE(FI_LOG_CQ, "\n");
+
+	dlist_for_each_safe(&cq->poll_nics, pnic, tmp, list) {
+		if (pnic->nic == nic) {
+			pnic->ref_cnt++;
+			return FI_SUCCESS;
+		}
+	}
+
+	pnic = malloc(sizeof(struct gnix_cq_poll_nic));
+	if (!pnic) {
+		GNIX_WARN(FI_LOG_CQ, "Failed to add NIC to CQ poll list.\n");
+		return -FI_ENOMEM;
+	}
+
+	/* EP holds a ref count on the NIC */
+	pnic->nic = nic;
+	pnic->ref_cnt = 1;
+	dlist_init(&pnic->list);
+	dlist_insert_tail(&pnic->list, &cq->poll_nics);
+
+	return FI_SUCCESS;
+}
+
+int _gnix_cq_poll_nic_rem(struct gnix_fid_cq *cq, struct gnix_nic *nic)
+{
+	struct gnix_cq_poll_nic *pnic, *tmp;
+
+	GNIX_TRACE(FI_LOG_CQ, "\n");
+
+	dlist_for_each_safe(&cq->poll_nics, pnic, tmp, list) {
+		if (pnic->nic == nic) {
+			if (!--pnic->ref_cnt) {
+				dlist_remove(&pnic->list);
+				free(pnic);
+			}
+			return FI_SUCCESS;
+		}
+	}
+
+	GNIX_WARN(FI_LOG_CQ, "NIC not found on CQ poll list.\n");
+	return -FI_EINVAL;
+}
+
 /*******************************************************************************
  * API functions.
  ******************************************************************************/
@@ -388,6 +454,8 @@ static ssize_t gnix_cq_readfrom(struct fid_cq *cq, void *buf, size_t count,
 		return -FI_EINVAL;
 
 	cq_priv = container_of(cq, struct gnix_fid_cq, cq_fid);
+
+	__gnix_cq_progress(cq_priv);
 
 	if (_gnix_queue_peek(cq_priv->errors))
 		return -FI_EAVAIL;
@@ -554,6 +622,7 @@ int gnix_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 	cq_priv->attr = *attr;
 	atomic_initialize(&cq_priv->ref_cnt, 0);
 	atomic_inc(&cq_priv->domain->ref_cnt);
+	dlist_init(&cq_priv->poll_nics);
 
 	cq_priv->cq_fid.fid.fclass = FI_CLASS_CQ;
 	cq_priv->cq_fid.fid.context = context;

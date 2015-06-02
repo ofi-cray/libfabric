@@ -349,6 +349,8 @@ int _gnix_cq_poll_nic_add(struct gnix_fid_cq *cq, struct gnix_nic *nic)
 {
 	struct gnix_cq_poll_nic *pnic, *tmp;
 
+	GNIX_TRACE(FI_LOG_CQ, "\n");
+
 	dlist_for_each_safe(&cq->poll_nics, pnic, tmp, list) {
 		if (pnic->nic == nic) {
 			pnic->ref_cnt++;
@@ -374,6 +376,8 @@ int _gnix_cq_poll_nic_add(struct gnix_fid_cq *cq, struct gnix_nic *nic)
 int _gnix_cq_poll_nic_rem(struct gnix_fid_cq *cq, struct gnix_nic *nic)
 {
 	struct gnix_cq_poll_nic *pnic, *tmp;
+
+	GNIX_TRACE(FI_LOG_CQ, "\n");
 
 	dlist_for_each_safe(&cq->poll_nics, pnic, tmp, list) {
 		if (pnic->nic == nic) {

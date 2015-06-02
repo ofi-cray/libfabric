@@ -137,7 +137,7 @@ int _gnix_cm_nic_free(struct gnix_cm_nic *cm_nic)
 	int ret = FI_SUCCESS;
 	gni_return_t status;
 
-	GNIX_INFO(FI_LOG_EP_CTRL, "%s\n", __func__);
+	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
 	if (cm_nic == NULL)
 		return -FI_EINVAL;
@@ -172,9 +172,9 @@ int _gnix_cm_nic_alloc(struct gnix_fid_domain *domain,
 	uint32_t device_addr, cdm_id;
 	gni_return_t status;
 
-	*cm_nic_ptr = NULL;
+	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
-	GNIX_INFO(FI_LOG_EP_CTRL, "%s\n", __func__);
+	*cm_nic_ptr = NULL;
 
 	cm_nic = (struct gnix_cm_nic *)calloc(1, sizeof(*cm_nic));
 	if (cm_nic == NULL) {

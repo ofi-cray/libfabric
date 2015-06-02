@@ -67,6 +67,8 @@ static int gnix_domain_close(fid_t fid)
 	struct gnix_nic *p, *next;
 	gni_return_t status;
 
+	GNIX_TRACE(FI_LOG_DOMAIN, "\n");
+
 	domain = container_of(fid, struct gnix_fid_domain, domain_fid.fid);
 	if (domain->domain_fid.fid.fclass != FI_CLASS_DOMAIN) {
 		ret = -FI_EINVAL;
@@ -75,8 +77,11 @@ static int gnix_domain_close(fid_t fid)
 
 	/* before checking the refcnt, flush the memory registration cache */
 	ret = _gnix_mr_cache_flush(&domain->mr_cache);
-	if (ret != FI_SUCCESS)
+	if (ret != FI_SUCCESS) {
+		GNIX_WARN(FI_LOG_DOMAIN,
+			  "failed to flush memory cache on domain close\n");
 		goto err;
+	}
 
 	/*
 	 * if non-zero refcnt, there are eps, mrs, and/or an eq associated
@@ -84,16 +89,16 @@ static int gnix_domain_close(fid_t fid)
 	 */
 
 	if (atomic_get(&domain->ref_cnt) != 0) {
+		GNIX_WARN(FI_LOG_DOMAIN, "non zero refcnt %d\n",
+			  atomic_get(&domain->ref_cnt));
 		ret = -FI_EBUSY;
 		goto err;
 	}
 
-	GNIX_INFO(FI_LOG_DOMAIN, "gnix_domain_close invoked.\n");
-
 	ret = _gnix_mr_cache_destroy(&domain->mr_cache);
 	if (ret != FI_SUCCESS) {
-		GNIX_WARN(FI_LOG_DOMAIN, "failed to destroy memory cache"
-				" on domain close");
+		GNIX_WARN(FI_LOG_DOMAIN,
+			  "failed to destroy memory cache on domain close\n");
 		goto err;
 	}
 
@@ -153,6 +158,8 @@ gnix_domain_ops_open(struct fid *fid, const char *ops_name, uint64_t flags,
 	int ret = -FI_ENOSYS;
 	struct gnix_fid_domain *domain;
 
+	GNIX_TRACE(FI_LOG_DOMAIN, "\n");
+
 	domain = container_of(fid, struct gnix_fid_domain, domain_fid.fid);
 	if (domain->domain_fid.fid.fclass != FI_CLASS_DOMAIN) {
 		ret = -FI_EINVAL;
@@ -172,7 +179,7 @@ int gnix_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 	uint32_t cookie;
 	struct gnix_fid_fabric *fabric_priv;
 
-	GNIX_INFO(FI_LOG_DOMAIN, "%s\n", __func__);
+	GNIX_TRACE(FI_LOG_DOMAIN, "\n");
 
 	fabric_priv = container_of(fabric, struct gnix_fid_fabric, fab_fid);
 	if (!info->domain_attr->name ||

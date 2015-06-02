@@ -156,6 +156,9 @@ void rdm_rma_teardown(void)
 	ret = fi_close(&av->fid);
 	cr_assert(!ret, "failure in closing av.");
 
+	ret = fi_close(&send_cq->fid);
+	cr_assert(!ret, "failure in closing cq.");
+
 	ret = fi_close(&dom->fid);
 	cr_assert(!ret, "failure in closing domain.");
 
@@ -266,15 +269,11 @@ Test(rdm_rma, rw)
 	cr_assert_eq(ret, 1);
 	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&stack_target);
 
-	printf("got write context event!\n");
-
 	l = 0;
 	while (stack_target[BUF_SZ-1] != stack_source[BUF_SZ-1]) {
 		pthread_yield();
 		l++;
 	}
-
-	printf("got write data in %d loops!\n", l);
 
 #define READ_CTX 0x4e3dda1aULL
 	stack_source[BUF_SZ-1] = 0;
@@ -290,15 +289,11 @@ Test(rdm_rma, rw)
 	cr_assert_eq(ret, 1);
 	cr_assert_eq((uint64_t)cqe.op_context, READ_CTX);
 
-	printf("got read context event!\n");
-
 	l = 0;
 	while (stack_target[BUF_SZ-1] != stack_source[BUF_SZ-1]) {
 		pthread_yield();
 		l++;
 	}
-
-	printf("got read data in %d loops!\n", l);
 
 	ret = _gnix_vc_disconnect(vc_conn);
 	cr_assert_eq(ret, FI_SUCCESS);
@@ -310,5 +305,11 @@ Test(rdm_rma, rw)
 	cr_assert_eq(ret, FI_SUCCESS);
 
 	ret = _gnix_vc_destroy(vc_listen);
+	cr_assert_eq(ret, FI_SUCCESS);
+
+	ret = fi_close(&rem_mr->fid);
+	cr_assert_eq(ret, FI_SUCCESS);
+
+	ret = fi_close(&loc_mr->fid);
 	cr_assert_eq(ret, FI_SUCCESS);
 }

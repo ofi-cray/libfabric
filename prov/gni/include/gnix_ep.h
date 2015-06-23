@@ -99,17 +99,6 @@ int _gnix_ep_get_vc(struct gnix_fid_ep *ep, fi_addr_t dest_addr,
 		    struct gnix_vc **vc_ptr);
 
 /**
- * @brief  try to push any messages on the sendq of a vc
- *
- * @param[in] vc        pointer to a previously allocated vc
- * @return              FI_SUCCESS on success meaning that no errors
- *                      were encountered trying to push any messages
- *                      on the send queue, -FI_ENOSPC insufficient
- *                      resources to send messages
- */
-int _gnix_ep_push_vc_sendq(struct gnix_vc *vc);
-
-/**
  * @brief  dequeue smsg messages that arrived before vc fully
  *         initialized at receiver
  *

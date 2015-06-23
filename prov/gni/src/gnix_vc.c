@@ -396,9 +396,9 @@ static int __gnix_vc_hndl_wc_match_con(struct gnix_datagram *dgram,
 		assert(vc != NULL);
 		ret = _gnix_ht_remove(ep->vc_ht, key);
 		assert(ret == FI_SUCCESS);
-		if (!slist_empty(&vc->send_queue))
-			slist_insert_head(vc->send_queue.head,
-					  &wc_vc->send_queue);
+		if (!slist_empty(&vc->tx_queue))
+			slist_insert_head(vc->tx_queue.head,
+					  &wc_vc->tx_queue);
 		fastlock_acquire(&ep->vc_list_lock);
 		dlist_remove(&vc->entry);
 		fastlock_release(&ep->vc_list_lock);
@@ -833,7 +833,7 @@ static int __gnix_vc_prog_fn(void *data, int *complete_ptr)
 		}
 	}
 
-	ret = _gnix_ep_push_vc_sendq(vc);
+	ret = _gnix_vc_push_tx_reqs(vc);
 	if (ret != FI_SUCCESS) {
 		GNIX_WARN(FI_LOG_EP_CTRL,
 			  "_gnix_ep_push_vc_sendq returned %d\n",
@@ -841,7 +841,7 @@ static int __gnix_vc_prog_fn(void *data, int *complete_ptr)
 		goto err;
 	}
 
-	if (slist_empty(&vc->send_queue) &&
+	if (slist_empty(&vc->tx_queue) &&
 	    !(vc->modes & GNIX_VC_MODE_PENDING_MSGS))
 		*complete_ptr = 1;
 #if 0
@@ -905,7 +905,7 @@ int _gnix_vc_alloc(struct gnix_fid_ep *ep_priv, fi_addr_t dest_addr,
 	memcpy(&vc_ptr->peer_addr, &dest_addr, sizeof(dest_addr));
 	vc_ptr->ep = ep_priv;
 	atomic_inc(&ep_priv->ref_cnt);
-	slist_init(&vc_ptr->send_queue);
+	slist_init(&vc_ptr->tx_queue);
 
 	/*
 	 * we need an id for the vc to allow for quick lookup
@@ -961,7 +961,7 @@ int _gnix_vc_destroy(struct gnix_vc *vc)
 	 * may not be correct for handling fi_shutdown.
 	 */
 
-	if (!slist_empty(&vc->send_queue)) {
+	if (!slist_empty(&vc->tx_queue)) {
 		GNIX_WARN(FI_LOG_EP_CTRL, "vc sendqueue not empty\n");
 		return -FI_EBUSY;
 	}
@@ -1223,3 +1223,172 @@ int _gnix_vc_add_to_wq(struct gnix_vc *vc)
 
 	return FI_SUCCESS;
 }
+
+int _gnix_vc_queue_tx_req(struct gnix_fab_req *req)
+{
+	struct gnix_vc *vc = req->vc;
+	int rc;
+
+	if (likely(vc->conn_state == GNIX_VC_CONNECTED) &&
+		   slist_empty(&vc->tx_queue)) {
+		/* try post */
+		rc = req->send_fn(req);
+		if (rc) {
+			/* queue request, TODO locking */
+			slist_insert_tail(&req->slist, &vc->tx_queue);
+			GNIX_INFO(FI_LOG_EP_DATA,
+				  "Queued request (%p) on full VC\n",
+				  req);
+		}
+	} else {
+		/* queue request, TODO locking */
+		slist_insert_tail(&req->slist, &vc->tx_queue);
+		GNIX_INFO(FI_LOG_EP_DATA,
+			  "Queued request (%p) on connecting VC\n",
+			  req);
+	}
+
+	return FI_SUCCESS;
+}
+
+int _gnix_vc_push_tx_reqs(struct gnix_vc *vc)
+{
+	int ret = FI_SUCCESS;
+	struct slist *list;
+	struct slist_entry *item;
+	struct gnix_fab_req *req;
+
+	/*
+	 * if vc is not in connected state can't push sends
+	 */
+
+	if (vc->conn_state != GNIX_VC_CONNECTED)
+		return -FI_EAGAIN;
+
+	/*
+	 * TODO: quick return if no TXDs
+	 */
+
+	/*
+	 * TODO: need a lock for send queue
+	 */
+
+	list = &vc->tx_queue;
+	item = list->head;
+	while (item != NULL) {
+		req = (struct gnix_fab_req *)container_of(item,
+							  struct gnix_fab_req,
+							  slist);
+		ret = req->send_fn(req);
+		if (ret == -EAGAIN) {
+			GNIX_INFO(FI_LOG_EP_DATA,
+				  "TX request queue stalled: %p\n",
+				  req);
+			break;
+		} else if (ret) {
+			GNIX_WARN(FI_LOG_EP_DATA,
+				  "Failed to push TX request %p: %d\n",
+				  req, ret);
+		} else {
+			GNIX_INFO(FI_LOG_EP_DATA,
+				  "TX request processed: %p\n",
+				  req);
+		}
+
+		slist_remove_head(&vc->tx_queue);
+		item = list->head;
+	}
+
+	/*
+	 * release tx_queue lock
+	 */
+
+	return ret;
+}
+
+int _gnix_ep_get_vc(struct gnix_fid_ep *ep, fi_addr_t dest_addr,
+			struct gnix_vc **vc_ptr)
+{
+	int ret = FI_SUCCESS;
+	struct gnix_vc *vc = NULL;
+	struct gnix_fid_av *av;
+	gnix_ht_key_t key;
+
+	av = ep->av;
+	assert(av != NULL);
+	if (av->type == FI_AV_MAP) {
+		memcpy(&key, &dest_addr, sizeof(gnix_ht_key_t));
+		vc = (struct gnix_vc *)_gnix_ht_lookup(ep->vc_ht,
+							key);
+		if (vc == NULL) {
+			ret = _gnix_vc_alloc(ep,
+					    dest_addr,
+					    &vc);
+			if (ret != FI_SUCCESS) {
+				GNIX_WARN(FI_LOG_EP_DATA,
+					  "_gnix_ht_alloc returned %d\n",
+					  ret);
+				goto err;
+			}
+			ret = _gnix_ht_insert(ep->vc_ht, key,
+						vc);
+			if (likely(ret == FI_SUCCESS)) {
+				vc->modes |= GNIX_VC_MODE_IN_HT;
+				fastlock_acquire(&ep->vc_list_lock);
+				dlist_insert_tail(&vc->entry,
+						  &ep->wc_vc_list);
+				fastlock_release(&ep->vc_list_lock);
+				ret = _gnix_vc_connect(vc);
+				if (ret != FI_SUCCESS) {
+					GNIX_WARN(FI_LOG_EP_DATA,
+						"_gnix_ht_connect returned %d\n",
+						   ret);
+					goto err;
+				}
+			} else if (ret == -FI_ENOSPC) {
+				vc = _gnix_ht_lookup(ep->vc_ht, key);
+				assert(vc != NULL);
+				assert(vc->modes & GNIX_VC_MODE_IN_HT);
+			} else {
+				GNIX_WARN(FI_LOG_EP_DATA,
+					  "_gnix_ht_insert returned %d\n",
+					   ret);
+				goto err;
+			}
+		}
+		*vc_ptr = vc;
+	} else {
+		/*
+		 * TODO: need thread safety for vc_table
+		 */
+		vc = ep->vc_table[dest_addr];
+		if (vc == NULL) {
+			ret = _gnix_vc_alloc(ep,
+					    dest_addr, /*TODO: need translate */
+					    &vc);
+			if (ret == FI_SUCCESS) {
+				ep->vc_table[dest_addr] = vc;
+				ret = _gnix_vc_connect(vc);
+				if (ret != FI_SUCCESS) {
+					GNIX_WARN(FI_LOG_EP_DATA,
+						  "_gnix_ht_connect returned %d\n",
+						   ret);
+					goto err;
+				}
+			} else {
+				GNIX_WARN(FI_LOG_EP_DATA,
+					  "_gnix_ht_alloc returned %d\n",
+					   ret);
+				goto err;
+			}
+		}
+		*vc_ptr = vc;
+	}
+
+	return ret;
+err:
+	if (vc != NULL)
+		_gnix_vc_destroy(vc);
+	return ret;
+}
+

@@ -262,6 +262,7 @@ struct gnix_fid_ep {
 	struct fid_ep ep_fid;
 	enum fi_ep_type type;
 	struct gnix_fid_domain *domain;
+	uint64_t op_flags;
 	struct gnix_fid_cq *send_cq;
 	struct gnix_fid_cq *recv_cq;
 	struct gnix_fid_av *av;
@@ -333,7 +334,6 @@ enum gnix_fab_req_type {
 	GNIX_FAB_RQ_SEND,
 	GNIX_FAB_RQ_TSEND,
 	GNIX_FAB_RQ_RDMA_WRITE,
-	GNIX_FAB_RQ_RDMA_WRITE_IMM_DATA,
 	GNIX_FAB_RQ_RDMA_READ,
 	GNIX_FAB_RQ_RECV,
 	GNIX_FAB_RQ_TRECV
@@ -370,6 +370,7 @@ struct gnix_fab_req {
 	   case of long messages or rdma requests greater than 4 GB */
 	void     *cur_pos;
 	struct gnix_vc *vc;
+	int (*send_fn)(void *);
 	void *completer_data;
 	int (*completer_fn)(void *);
 	uint64_t cq_flags;

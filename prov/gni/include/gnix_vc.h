@@ -93,7 +93,7 @@ enum gnix_vc_conn_req_type {
  *                           the VC not pertaining to the connection state.
  */
 struct gnix_vc {
-	struct slist send_queue;
+	struct slist tx_queue;
 	struct dlist_entry entry;
 	struct gnix_address peer_addr;
 	struct gnix_fid_ep *ep;
@@ -196,5 +196,9 @@ static inline enum gnix_vc_conn_state _gnix_vc_state(struct gnix_vc *vc)
 	assert(vc);
 	return vc->conn_state;
 }
+
+
+int _gnix_vc_push_tx_reqs(struct gnix_vc *vc);
+int _gnix_vc_queue_tx_req(struct gnix_fab_req *req);
 
 #endif /* _GNIX_VC_H_ */

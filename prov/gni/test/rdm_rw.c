@@ -109,7 +109,7 @@ void rdm_rma_setup(void)
 	ret = fi_cq_open(dom, &cq_attr, &send_cq, 0);
 	cr_assert(!ret, "fi_cq_open");
 
-	ret = fi_ep_bind(ep[0], &send_cq->fid, FI_TRANSMIT);
+	ret = fi_ep_bind(ep[0], &send_cq->fid, FI_SEND);
 	cr_assert(!ret, "fi_ep_bind");
 
 	ret = fi_getname(&ep[0]->fid, NULL, &addrlen);
@@ -143,6 +143,12 @@ void rdm_rma_setup(void)
 
 	ret = fi_ep_bind(ep[1], &av->fid, 0);
 	cr_assert(!ret, "fi_ep_bind");
+
+	ret = fi_enable(ep[0]);
+	cr_assert(!ret, "fi_ep_enable");
+
+	ret = fi_enable(ep[1]);
+	cr_assert(!ret, "fi_ep_enable");
 }
 
 void rdm_rma_teardown(void)
@@ -184,11 +190,6 @@ TestSuite(rdm_rma, .init = rdm_rma_setup, .fini = rdm_rma_teardown,
 Test(rdm_rma, rw)
 {
 	int ret, l;
-	struct gnix_vc *vc_conn, *vc_listen;
-	struct gnix_fid_ep *ep_priv[2];
-	struct gnix_cm_nic *cm_nic[2];
-	gnix_ht_key_t key;
-	enum gnix_vc_conn_state state;
 	struct fid_mr *rem_mr, *loc_mr;
 	uint64_t mr_key;
 	uint64_t stack_target[BUF_SZ];
@@ -196,57 +197,6 @@ Test(rdm_rma, rw)
 	ssize_t sz;
 	struct fi_cq_entry cqe;
 
-	ep_priv[0] = container_of(ep[0], struct gnix_fid_ep, ep_fid);
-	cm_nic[0] = ep_priv[0]->cm_nic;
-
-	ep_priv[1] = container_of(ep[1], struct gnix_fid_ep, ep_fid);
-	cm_nic[1] = ep_priv[1]->cm_nic;
-
-	ret = _gnix_vc_alloc(ep_priv[0], gni_addr[1], &vc_conn);
-	cr_assert_eq(ret, FI_SUCCESS);
-
-	memcpy(&key, &gni_addr[1],
-		sizeof(gnix_ht_key_t));
-
-	ret = _gnix_ht_insert(ep_priv[0]->vc_ht, key, vc_conn);
-	cr_assert_eq(ret, FI_SUCCESS);
-	vc_conn->modes |= GNIX_VC_MODE_IN_HT;
-
-	ret = _gnix_vc_alloc(ep_priv[1], FI_ADDR_UNSPEC, &vc_listen);
-	cr_assert_eq(ret, FI_SUCCESS);
-
-	ret = _gnix_vc_accept(vc_listen);
-	cr_assert_eq(ret, FI_SUCCESS);
-
-	/*
-	 * this is the moral equivalent of fi_enable(ep[0]),
-	 * but we don't want to do that in our prologue since
-	 * the fi_enable would consume all of the available wc datagrams.
-	 */
-	dlist_insert_tail(&vc_listen->entry, &ep_priv[1]->wc_vc_list);
-
-	ret = _gnix_vc_connect(vc_conn);
-	cr_assert_eq(ret, FI_SUCCESS);
-
-	/*
-	 * progress the cm_nic
-	 */
-
-	state = GNIX_VC_CONN_NONE;
-	while (state != GNIX_VC_CONNECTED) {
-		ret = _gnix_cm_nic_progress(cm_nic[0]);
-		cr_assert_eq(ret, FI_SUCCESS);
-		pthread_yield();
-		state = _gnix_vc_state(vc_conn);
-	}
-
-	state = GNIX_VC_CONN_NONE;
-	while (state != GNIX_VC_CONNECTED) {
-		ret = _gnix_cm_nic_progress(cm_nic[1]);
-		cr_assert_eq(ret, FI_SUCCESS);
-		pthread_yield();
-		state = _gnix_vc_state(vc_listen);
-	}
 
 	ret = fi_mr_reg(dom, &stack_target, sizeof(stack_target),
 			FI_REMOTE_WRITE, 0, 0, 0, &rem_mr, &stack_target);
@@ -260,9 +210,9 @@ Test(rdm_rma, rw)
 
 	stack_source[BUF_SZ-1] = 0xdeadbeef;
 	stack_target[BUF_SZ-1] = 0;
-	sz = _gnix_write(vc_conn, (uint64_t)&stack_source, sizeof(stack_target),
-			 loc_mr, (uint64_t)&stack_target, mr_key,
-			 &stack_target, 0, 0);
+	sz = fi_write(ep[0], stack_source, sizeof(stack_target),
+			 loc_mr, gni_addr[1], (uint64_t)&stack_target, mr_key,
+			 &stack_target);
 	cr_assert_eq(sz, 0);
 
 	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
@@ -285,9 +235,9 @@ Test(rdm_rma, rw)
 #define READ_CTX 0x4e3dda1aULL
 	stack_source[BUF_SZ-1] = 0;
 	stack_target[BUF_SZ-1] = 0xbeefdead;
-	sz = _gnix_read(vc_conn, (uint64_t)&stack_source, sizeof(stack_target),
-			loc_mr, (uint64_t)&stack_target, mr_key,
-			(void *)READ_CTX, 0, 0);
+	sz = fi_read(ep[0], stack_source, sizeof(stack_target),
+			loc_mr, gni_addr[1], (uint64_t)&stack_target, mr_key,
+			(void *)READ_CTX);
 	cr_assert_eq(sz, 0);
 
 	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
@@ -309,31 +259,4 @@ Test(rdm_rma, rw)
 
 	fi_close(&loc_mr->fid);
 	fi_close(&rem_mr->fid);
-
-
-	ret = _gnix_vc_disconnect(vc_conn);
-	cr_assert_eq(ret, FI_SUCCESS);
-
-	ret = _gnix_vc_destroy(vc_conn);
-	cr_assert_eq(ret, FI_SUCCESS);
-
-
-	ret = _gnix_vc_disconnect(vc_conn);
-	cr_assert_eq(ret, FI_SUCCESS);
-
-	/*
-	 * we no longer disconnect/destroy listening vc
-	 * as listening vc's are now tracked internally
-	 * and get cleaned up as part of close of ep
-	 * operation.
-	 */
-
-#if 0
-	ret = _gnix_vc_disconnect(vc_listen);
-	cr_assert_eq(ret, FI_SUCCESS);
-
-	ret = _gnix_vc_destroy(vc_listen);
-	cr_assert_eq(ret, FI_SUCCESS);
-#endif
-
 }

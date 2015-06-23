@@ -83,7 +83,6 @@ static gni_post_type_t __gnix_fr_post_type(int fr_type)
 {
 	switch (fr_type) {
 	case GNIX_FAB_RQ_RDMA_WRITE:
-	case GNIX_FAB_RQ_RDMA_WRITE_IMM_DATA:
 		return GNI_POST_RDMA_PUT;
 	case GNIX_FAB_RQ_RDMA_READ:
 		return GNI_POST_RDMA_GET;
@@ -95,8 +94,9 @@ static gni_post_type_t __gnix_fr_post_type(int fr_type)
 	return -FI_ENOSYS;
 }
 
-static int __gnix_post_req(struct gnix_fab_req *fab_req)
+int _gnix_rma_post_req(void *data)
 {
+	struct gnix_fab_req *fab_req = (struct gnix_fab_req *)data;
 	struct gnix_fid_ep *ep = fab_req->gnix_ep;
 	struct gnix_nic *nic = ep->nic;
 	struct gnix_fid_mem_desc *md;
@@ -112,7 +112,7 @@ static int __gnix_post_req(struct gnix_fab_req *fab_req)
 		GNIX_INFO(FI_LOG_EP_DATA, "_gnix_nic_tx_alloc() failed: %d\n",
 			 rc);
 		fastlock_release(&nic->lock);
-		return -FI_ENOSPC;
+		return -FI_EAGAIN;
 	}
 
 	txd->desc.completer_fn = __gnix_rma_txd_complete;
@@ -156,25 +156,34 @@ static int __gnix_post_req(struct gnix_fab_req *fab_req)
 	return gnixu_to_fi_errno(status);
 }
 
-ssize_t _gnix_rma(struct gnix_vc *vc, enum gnix_fab_req_type fr_type,
-		  uint64_t loc_addr, size_t len,
-		  void *mdesc, uint64_t rem_addr, uint64_t mkey,
+ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
+		  uint64_t loc_addr, size_t len, void *mdesc,
+		  uint64_t dest_addr, uint64_t rem_addr, uint64_t mkey,
 		  void *context, uint64_t flags, uint64_t data)
 {
-	struct gnix_fid_ep *ep = vc->ep;
+	struct gnix_vc *vc;
 	struct gnix_fab_req *req;
 	struct gnix_fid_mem_desc *md;
 	int rc;
 
-	/* I need a connected VC and valid local memory descriptor */
-	if (!vc || !mdesc) {
+	/* TODO better validation of mdesc */
+	if (!ep || !mdesc) {
 		return -FI_EINVAL;
+	}
+
+	/* find VC for target */
+	rc = _gnix_ep_get_vc(ep, dest_addr, &vc);
+	if (rc) {
+		GNIX_INFO(FI_LOG_EP_DATA,
+			  "_gnix_ep_get_vc() failed, addr: %lx, rc:\n",
+			  dest_addr, rc);
+		return rc;
 	}
 
 	/* setup fabric request */
 	req = _gnix_fr_alloc(ep);
 	if (!req) {
-		GNIX_INFO(FI_LOG_EP_DATA, "_fr_alloc() failed\n");
+		GNIX_INFO(FI_LOG_EP_DATA, "_gnix_fr_alloc() failed\n");
 		return -FI_ENOSPC;
 	}
 
@@ -184,6 +193,7 @@ ssize_t _gnix_rma(struct gnix_vc *vc, enum gnix_fab_req_type fr_type,
 	req->completer_fn = __gnix_rma_fab_req_complete;
 	req->completer_data = req;
 	req->user_context = context;
+	req->send_fn = _gnix_rma_post_req;
 
 	md = container_of(mdesc, struct gnix_fid_mem_desc, mr_fid);
 	req->loc_addr = loc_addr;
@@ -193,59 +203,6 @@ ssize_t _gnix_rma(struct gnix_vc *vc, enum gnix_fab_req_type fr_type,
 	req->len = len;
 	req->flags = flags;
 
-	/* try post */
-	rc = __gnix_post_req(req);
-	if (rc) {
-		/* queue request */
-		return rc;
-	}
-
-	return FI_SUCCESS;
+	return _gnix_vc_queue_tx_req(req);
 }
-
-ssize_t _gnix_write(struct gnix_vc *vc, uint64_t loc_addr, size_t len,
-		    void *mdesc, uint64_t rem_addr, uint64_t mkey,
-		    void *context, uint64_t flags, uint64_t data)
-{
-	return _gnix_rma(vc, GNIX_FAB_RQ_RDMA_WRITE, loc_addr, len, mdesc,
-			 rem_addr, mkey, context, flags, data);
-}
-
-ssize_t _gnix_write_imm(struct gnix_vc *vc, uint64_t loc_addr, size_t len,
-		        void *mdesc, uint64_t rem_addr, uint64_t mkey,
-		        void *context, uint64_t flags, uint64_t data)
-{
-	return _gnix_rma(vc, GNIX_FAB_RQ_RDMA_WRITE_IMM_DATA, loc_addr, len,
-			 mdesc, rem_addr, mkey, context, flags, data);
-}
-
-ssize_t _gnix_read(struct gnix_vc *vc, uint64_t loc_addr, size_t len,
-		   void *mdesc, uint64_t rem_addr, uint64_t mkey,
-		   void *context, uint64_t flags, uint64_t data)
-{
-	return _gnix_rma(vc, GNIX_FAB_RQ_RDMA_READ, loc_addr, len, mdesc,
-			 rem_addr, mkey, context, flags, data);
-}
-
-#if 0
-gnix_vc *_gnix_ep_vc_lookup(gnix_fid_ep *ep_priv, fi_addr addr)
-{
-	
-}
-
-static ssize_t gnix_ep_rma_write(struct fid_ep *ep, const void *buf,
-				 size_t len, void *desc, fi_addr_t dest_addr,
-				 uint64_t addr, uint64_t key, void *context)
-{
-	gnix_vc *vc;
-
-	/* find VC for target, connect if necessary */
-	vc = _gnix_ep_vc_lookup(ep_priv, dest_addr);
-	if (!vc) {
-		return -FI_EINVAL;
-	}
-
-	return _gnix_write(vc, buf, len, desc, addr, key, context, 0, 0);
-}
-#endif
 

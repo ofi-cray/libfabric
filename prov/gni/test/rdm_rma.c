@@ -70,6 +70,12 @@ size_t gni_addr[2];
 static struct fid_cq *send_cq;
 static struct fi_cq_attr cq_attr;
 
+#define BUF_SZ 4096
+uint64_t target[BUF_SZ];
+uint64_t source[BUF_SZ];
+struct fid_mr *rem_mr, *loc_mr;
+uint64_t mr_key;
+
 void rdm_rma_setup(void)
 {
 	int ret = 0;
@@ -149,11 +155,24 @@ void rdm_rma_setup(void)
 
 	ret = fi_enable(ep[1]);
 	cr_assert(!ret, "fi_ep_enable");
+
+	ret = fi_mr_reg(dom, &target, sizeof(target),
+			FI_REMOTE_WRITE, 0, 0, 0, &rem_mr, &target);
+	cr_assert_eq(ret, 0);
+
+	ret = fi_mr_reg(dom, &source, sizeof(source),
+			FI_REMOTE_WRITE, 0, 0, 0, &loc_mr, &source);
+	cr_assert_eq(ret, 0);
+
+	mr_key = fi_mr_key(rem_mr);
 }
 
 void rdm_rma_teardown(void)
 {
 	int ret = 0;
+
+	fi_close(&loc_mr->fid);
+	fi_close(&rem_mr->fid);
 
 	ret = fi_close(&ep[0]->fid);
 	cr_assert(!ret, "failure in closing ep.");
@@ -179,6 +198,31 @@ void rdm_rma_teardown(void)
 	free(ep_name[1]);
 }
 
+void init_data(uint64_t *buf, int len, uint64_t seed)
+{
+	int i;
+
+	for (i = 0; i < len; i++) {
+		buf[i] = seed++;
+	}
+}
+
+int check_data(uint64_t *buf1, uint64_t *buf2, int len)
+{
+	int i;
+
+	for (i = 0; i < len; i++) {
+		if (buf1[i] != buf2[i]) {
+			printf("data mismatch, elem: %d, exp: %lx, act: %lx\n",
+			       i, buf1[i], buf2[i]);
+			fflush(stdout);
+			return 0;
+		}
+	}
+
+	return 1;
+}
+
 /*******************************************************************************
  * Test vc functions.
  ******************************************************************************/
@@ -186,33 +230,17 @@ void rdm_rma_teardown(void)
 TestSuite(rdm_rma, .init = rdm_rma_setup, .fini = rdm_rma_teardown,
 	  .disabled = false);
 
-#define BUF_SZ 4096
-Test(rdm_rma, rw)
+Test(rdm_rma, write)
 {
-	int ret, l;
-	struct fid_mr *rem_mr, *loc_mr;
-	uint64_t mr_key;
-	uint64_t stack_target[BUF_SZ];
-	uint64_t stack_source[BUF_SZ];
+	int ret;
 	ssize_t sz;
 	struct fi_cq_entry cqe;
 
-
-	ret = fi_mr_reg(dom, &stack_target, sizeof(stack_target),
-			FI_REMOTE_WRITE, 0, 0, 0, &rem_mr, &stack_target);
-	cr_assert_eq(ret, 0);
-
-	ret = fi_mr_reg(dom, &stack_source, sizeof(stack_source),
-			FI_REMOTE_WRITE, 0, 0, 0, &loc_mr, &stack_source);
-	cr_assert_eq(ret, 0);
-
-	mr_key = fi_mr_key(rem_mr);
-
-	stack_source[BUF_SZ-1] = 0xdeadbeef;
-	stack_target[BUF_SZ-1] = 0;
-	sz = fi_write(ep[0], stack_source, sizeof(stack_target),
-			 loc_mr, gni_addr[1], (uint64_t)&stack_target, mr_key,
-			 &stack_target);
+	init_data(source, BUF_SZ, 0xdeadbeefbeef4123);
+	init_data(target, BUF_SZ, 0);
+	sz = fi_write(ep[0], source, sizeof(target),
+			 loc_mr, gni_addr[1], (uint64_t)&target, mr_key,
+			 &target);
 	cr_assert_eq(sz, 0);
 
 	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
@@ -220,23 +248,173 @@ Test(rdm_rma, rw)
 	}
 
 	cr_assert_eq(ret, 1);
-	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&stack_target);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
 
 	dbg_printf("got write context event!\n");
 
-	l = 0;
-	while(stack_target[BUF_SZ-1] != stack_source[BUF_SZ-1]) {
+	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+}
+
+Test(rdm_rma, writev)
+{
+	int ret;
+	ssize_t sz;
+	struct fi_cq_entry cqe;
+	struct iovec iov;
+
+	iov.iov_base = source;
+	iov.iov_len = sizeof(source);
+
+	init_data(source, BUF_SZ, 0xdeadbeefbeef4125);
+	init_data(target, BUF_SZ, 0);
+	sz = fi_writev(ep[0], &iov, (void **)&loc_mr, 1,
+		       gni_addr[1], (uint64_t)&target, mr_key,
+		       &target);
+	cr_assert_eq(sz, 0);
+
+	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
 		pthread_yield();
-		l++;
 	}
 
-	dbg_printf("got write data in %d loops!\n", l);
+	cr_assert_eq(ret, 1);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
+
+	dbg_printf("got write context event!\n");
+
+	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+}
+
+Test(rdm_rma, writemsg)
+{
+	int ret;
+	ssize_t sz;
+	struct fi_cq_entry cqe;
+	struct iovec iov;
+	struct fi_msg_rma msg;
+	struct fi_rma_iov rma_iov;
+
+	iov.iov_base = source;
+	iov.iov_len = sizeof(source);
+
+	rma_iov.addr = (uint64_t)target;
+	rma_iov.len = sizeof(target);
+	rma_iov.key = mr_key;
+
+	msg.msg_iov = &iov;
+	msg.desc = (void **)&loc_mr;
+	msg.iov_count = 1;
+	msg.addr = gni_addr[1];
+	msg.rma_iov = &rma_iov;
+	msg.rma_iov_count = 1;
+	msg.context = target;
+	msg.data = (uint64_t)target;
+
+	init_data(source, BUF_SZ, 0xdeadbeefbeef);
+	init_data(target, BUF_SZ, 0);
+	sz = fi_writemsg(ep[0], &msg, 0);
+	cr_assert_eq(sz, 0);
+
+	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
+		pthread_yield();
+	}
+
+	cr_assert_eq(ret, 1);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
+
+	dbg_printf("got write context event!\n");
+
+	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+}
+
+Test(rdm_rma, inject_write)
+{
+	int ret;
+	ssize_t sz;
+	struct fi_cq_entry cqe;
+
+	init_data(source, BUF_SZ, 0xdeadbeefbeef4123);
+	init_data(target, BUF_SZ, 0);
+	sz = fi_inject_write(ep[0], source, sizeof(target),
+			     gni_addr[1], (uint64_t)&target, mr_key);
+	cr_assert_eq(sz, 0);
+
+	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
+		pthread_yield();
+	}
+
+	cr_assert_eq(ret, 1);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
+
+	dbg_printf("got write context event!\n");
+
+	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+}
+
+Test(rdm_rma, writedata)
+{
+	int ret;
+	ssize_t sz;
+	struct fi_cq_entry cqe;
+
+#define WRITE_DATA 0x5123da1a145
+	init_data(source, BUF_SZ, 0xdeadbeefbeef4123);
+	init_data(target, BUF_SZ, 0);
+	sz = fi_writedata(ep[0], source, sizeof(target), loc_mr, WRITE_DATA,
+			 gni_addr[1], (uint64_t)&target, mr_key,
+			 &target);
+	cr_assert_eq(sz, 0);
+
+	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
+		pthread_yield();
+	}
+
+	cr_assert_eq(ret, 1);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
+
+	dbg_printf("got write context event!\n");
+
+	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+}
+
+Test(rdm_rma, inject_writedata)
+{
+	int ret;
+	ssize_t sz;
+	struct fi_cq_entry cqe;
+
+#define INJECT_WRITE_DATA 0x5123da1a
+	init_data(source, BUF_SZ, 0xdeadbeefbeef4123);
+	init_data(target, BUF_SZ, 0);
+	sz = fi_inject_writedata(ep[0], source, sizeof(target),
+				 INJECT_WRITE_DATA,
+				 gni_addr[1], (uint64_t)&target, mr_key);
+	cr_assert_eq(sz, 0);
+
+	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
+		pthread_yield();
+	}
+
+	cr_assert_eq(ret, 1);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
+
+	dbg_printf("got write context event!\n");
+
+	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+}
+
+
+
+Test(rdm_rma, read)
+{
+	int ret;
+	ssize_t sz;
+	struct fi_cq_entry cqe;
 
 #define READ_CTX 0x4e3dda1aULL
-	stack_source[BUF_SZ-1] = 0;
-	stack_target[BUF_SZ-1] = 0xbeefdead;
-	sz = fi_read(ep[0], stack_source, sizeof(stack_target),
-			loc_mr, gni_addr[1], (uint64_t)&stack_target, mr_key,
+	init_data(source, BUF_SZ, 0);
+	init_data(target, BUF_SZ, 0xdeadbeefbeef43ad);
+	sz = fi_read(ep[0], source, sizeof(target),
+			loc_mr, gni_addr[1], (uint64_t)&target, mr_key,
 			(void *)READ_CTX);
 	cr_assert_eq(sz, 0);
 
@@ -249,14 +427,5 @@ Test(rdm_rma, rw)
 
 	dbg_printf("got read context event!\n");
 
-	l = 0;
-	while(stack_target[BUF_SZ-1] != stack_source[BUF_SZ-1]) {
-		pthread_yield();
-		l++;
-	}
-
-	dbg_printf("got read data in %d loops!\n", l);
-
-	fi_close(&loc_mr->fid);
-	fi_close(&rem_mr->fid);
+	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
 }

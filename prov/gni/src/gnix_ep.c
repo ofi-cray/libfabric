@@ -501,7 +501,7 @@ int _gnix_send_req(void *data)
 
 		tdesc->desc.smsg_desc.hdr.len = req->len;
 		tdesc->desc.smsg_desc.hdr.flags = 0;
-		tdesc->desc.smsg_desc.buf = req->buf;
+		tdesc->desc.smsg_desc.buf = (void *)req->loc_addr;
 		tdesc->desc.req = req;
 		tdesc->desc.ep = ep;
 		tdesc->desc.completer_fn =
@@ -510,7 +510,7 @@ int _gnix_send_req(void *data)
 		status = GNI_SmsgSendWTag(req->vc->gni_ep,
 					  &tdesc->desc.smsg_desc.hdr,
 					  sizeof(struct gnix_smsg_hdr),
-					  (void *)req->buf,
+					  (void *)req->loc_addr,
 					  req->len,
 					  tdesc->desc.id,
 					  GNIX_SMSG_T_EGR_W_DATA);
@@ -550,16 +550,10 @@ static ssize_t gnix_ep_send(struct fid_ep *ep, const void *buf, size_t len,
 	if (nic == NULL)
 		return -FI_EINVAL;
 
-	if (ep_priv->type == FI_EP_RDM) {
-		ret = _gnix_ep_get_vc(ep_priv, dest_addr, &vc);
-		if (unlikely(ret != FI_SUCCESS)) {
-			GNIX_WARN(FI_LOG_EP_DATA,
-				  "_gnix_ep_get_vc returned %d\n",
-				   ret);
-			return ret;
-		}
-	} else
-		vc = ep_priv->vc; /* FI_EP_MSG easy */
+	ret = _gnix_ep_get_vc(ep_priv, dest_addr, &vc);
+	if (ret) {
+		return ret;
+	}
 
 	req = _gnix_fr_alloc(ep_priv);
 	if (req == NULL)
@@ -654,71 +648,189 @@ static ssize_t gnix_ep_read(struct fid_ep *ep, void *buf, size_t len,
 			    void *desc, fi_addr_t src_addr, uint64_t addr,
 			    uint64_t key, void *context)
 {
-	struct gnix_fid_ep *ep_priv;
+	struct gnix_fid_ep *gnix_ep;
 
 	if (!ep) {
 		return -FI_EINVAL;
 	}
 
-	ep_priv = container_of(ep, struct gnix_fid_ep, ep_fid);
-	assert((ep_priv->type == FI_EP_RDM) || (ep_priv->type == FI_EP_MSG));
+	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
+	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
 
-	return _gnix_rma(ep_priv, GNIX_FAB_RQ_RDMA_READ,
+	return _gnix_rma(gnix_ep, GNIX_FAB_RQ_RDMA_READ,
 			 (uint64_t)buf, len, desc,
 			 src_addr, addr, key,
-			 context, ep_priv->op_flags, 0);
+			 context, gnix_ep->op_flags, 0);
 }
 
 static ssize_t gnix_ep_readv(struct fid_ep *ep, const struct iovec *iov,
 				void **desc, size_t count, fi_addr_t src_addr,
 				uint64_t addr, uint64_t key, void *context)
 {
-	return -FI_ENOSYS;
+	struct gnix_fid_ep *gnix_ep;
+
+	if (!ep || !iov || !desc || count != 1) {
+		return -FI_EINVAL;
+	}
+
+	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
+	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
+
+	return _gnix_rma(gnix_ep, GNIX_FAB_RQ_RDMA_READ,
+			 (uint64_t)iov[0].iov_base, iov[0].iov_len, desc[0],
+			 src_addr, addr, key,
+			 context, gnix_ep->op_flags, 0);
 }
 
 static ssize_t gnix_ep_readmsg(struct fid_ep *ep, const struct fi_msg_rma *msg,
 				uint64_t flags)
 {
-	return -FI_ENOSYS;
+	struct gnix_fid_ep *gnix_ep;
+
+	if (!ep || !msg || !msg->msg_iov || !msg->rma_iov || !msg->desc ||
+	    msg->iov_count != 1 || msg->rma_iov_count != 1 ||
+	    msg->rma_iov[0].len > msg->msg_iov[0].iov_len) {
+		return -FI_EINVAL;
+	}
+
+	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
+	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
+
+	return _gnix_rma(gnix_ep, GNIX_FAB_RQ_RDMA_READ,
+			 (uint64_t)msg->msg_iov[0].iov_base,
+			 msg->msg_iov[0].iov_len, msg->desc[0],
+			 msg->addr, msg->rma_iov[0].addr, msg->rma_iov[0].key,
+			 msg->context, flags, msg->data);
 }
 
 static ssize_t gnix_ep_write(struct fid_ep *ep, const void *buf, size_t len,
 				void *desc, fi_addr_t dest_addr, uint64_t addr,
 				uint64_t key, void *context)
 {
-	struct gnix_fid_ep *ep_priv;
+	struct gnix_fid_ep *gnix_ep;
 
 	if (!ep) {
 		return -FI_EINVAL;
 	}
 
-	ep_priv = container_of(ep, struct gnix_fid_ep, ep_fid);
-	assert((ep_priv->type == FI_EP_RDM) || (ep_priv->type == FI_EP_MSG));
+	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
+	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
 
-	return _gnix_rma(ep_priv, GNIX_FAB_RQ_RDMA_WRITE,
+	return _gnix_rma(gnix_ep, GNIX_FAB_RQ_RDMA_WRITE,
 			 (uint64_t)buf, len, desc,
 			 dest_addr, addr, key,
-			 context, ep_priv->op_flags, 0);
+			 context, gnix_ep->op_flags, 0);
 }
 
 static ssize_t gnix_ep_writev(struct fid_ep *ep, const struct iovec *iov,
 				void **desc, size_t count, fi_addr_t dest_addr,
 				uint64_t addr, uint64_t key, void *context)
 {
-	return -FI_ENOSYS;
+	struct gnix_fid_ep *gnix_ep;
+
+	if (!ep || !iov || !desc || count != 1) {
+		return -FI_EINVAL;
+	}
+
+	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
+	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
+
+	return _gnix_rma(gnix_ep, GNIX_FAB_RQ_RDMA_WRITE,
+			 (uint64_t)iov[0].iov_base, iov[0].iov_len, desc[0],
+			 dest_addr, addr, key,
+			 context, gnix_ep->op_flags, 0);
 }
 
 static ssize_t gnix_ep_writemsg(struct fid_ep *ep, const struct fi_msg_rma *msg,
 				uint64_t flags)
 {
-	return -FI_ENOSYS;
+	struct gnix_fid_ep *gnix_ep;
+
+	if (!ep || !msg || !msg->msg_iov || !msg->rma_iov || !msg->desc ||
+	    msg->iov_count != 1 || msg->rma_iov_count != 1 ||
+	    msg->rma_iov[0].len > msg->msg_iov[0].iov_len) {
+		return -FI_EINVAL;
+	}
+
+	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
+	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
+
+	return _gnix_rma(gnix_ep, GNIX_FAB_RQ_RDMA_WRITE,
+			 (uint64_t)msg->msg_iov[0].iov_base,
+			 msg->msg_iov[0].iov_len, msg->desc[0],
+			 msg->addr, msg->rma_iov[0].addr, msg->rma_iov[0].key,
+			 msg->context, flags, msg->data);
 }
 
-static ssize_t gnix_ep_rma_inject(struct fid_ep *ep, const void *buf, size_t len,
-			fi_addr_t dest_addr, uint64_t addr, uint64_t key)
+static ssize_t gnix_ep_rma_inject(struct fid_ep *ep, const void *buf,
+				  size_t len, fi_addr_t dest_addr,
+				  uint64_t addr, uint64_t key)
 {
-	return -FI_ENOSYS;
+	struct gnix_fid_ep *gnix_ep;
+	uint64_t flags;
+
+	if (!ep) {
+		return -FI_EINVAL;
+	}
+
+	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
+	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
+
+	flags = gnix_ep->op_flags | FI_INJECT;
+
+	return _gnix_rma(gnix_ep, GNIX_FAB_RQ_RDMA_WRITE,
+			 (uint64_t)buf, len, NULL,
+			 dest_addr, addr, key,
+			 NULL, flags, 0);
 }
+
+static ssize_t gnix_ep_writedata(struct fid_ep *ep, const void *buf,
+				 size_t len, void *desc, uint64_t data,
+				 fi_addr_t dest_addr, uint64_t addr,
+				 uint64_t key, void *context)
+{
+	struct gnix_fid_ep *gnix_ep;
+	uint64_t flags;
+
+	if (!ep) {
+		return -FI_EINVAL;
+	}
+
+	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
+	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
+
+	flags = gnix_ep->op_flags | FI_REMOTE_CQ_DATA;
+
+	return _gnix_rma(gnix_ep, GNIX_FAB_RQ_RDMA_WRITE,
+			 (uint64_t)buf, len, desc,
+			 dest_addr, addr, key,
+			 context, flags, data);
+}
+
+static ssize_t gnix_ep_rma_injectdata(struct fid_ep *ep, const void *buf,
+				      size_t len, uint64_t data,
+				      fi_addr_t dest_addr, uint64_t addr,
+				      uint64_t key)
+{
+	struct gnix_fid_ep *gnix_ep;
+	uint64_t flags;
+
+	if (!ep) {
+		return -FI_EINVAL;
+	}
+
+	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
+	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
+
+	flags = gnix_ep->op_flags | FI_INJECT | FI_REMOTE_CQ_DATA;
+
+	return _gnix_rma(gnix_ep, GNIX_FAB_RQ_RDMA_WRITE,
+			 (uint64_t)buf, len, NULL,
+			 dest_addr, addr, key,
+			 NULL, flags, data);
+}
+
+
 
 
 /*******************************************************************************
@@ -1296,8 +1408,8 @@ static struct fi_ops_rma gnix_ep_rma_ops = {
 	.writev = gnix_ep_writev,
 	.writemsg = gnix_ep_writemsg,
 	.inject = gnix_ep_rma_inject,
-	.writedata = fi_no_rma_writedata,
-	.injectdata = fi_no_rma_injectdata,
+	.writedata = gnix_ep_writedata,
+	.injectdata = gnix_ep_rma_injectdata,
 };
 
 struct fi_ops_tagged gnix_ep_tagged_ops = {

@@ -1306,8 +1306,8 @@ int _gnix_vc_push_tx_reqs(struct gnix_vc *vc)
 	return ret;
 }
 
-int _gnix_ep_get_vc(struct gnix_fid_ep *ep, fi_addr_t dest_addr,
-			struct gnix_vc **vc_ptr)
+static int __gnix_ep_get_vc(struct gnix_fid_ep *ep, fi_addr_t dest_addr,
+			    struct gnix_vc **vc_ptr)
 {
 	int ret = FI_SUCCESS;
 	struct gnix_vc *vc = NULL;
@@ -1316,6 +1316,10 @@ int _gnix_ep_get_vc(struct gnix_fid_ep *ep, fi_addr_t dest_addr,
 
 	av = ep->av;
 	assert(av != NULL);
+
+	if (av->type == FI_AV_TABLE)
+		return -FI_ENOSYS;
+
 	if (av->type == FI_AV_MAP) {
 		memcpy(&key, &dest_addr, sizeof(gnix_ht_key_t));
 		vc = (struct gnix_vc *)_gnix_ht_lookup(ep->vc_ht,
@@ -1326,7 +1330,7 @@ int _gnix_ep_get_vc(struct gnix_fid_ep *ep, fi_addr_t dest_addr,
 					    &vc);
 			if (ret != FI_SUCCESS) {
 				GNIX_WARN(FI_LOG_EP_DATA,
-					  "_gnix_ht_alloc returned %d\n",
+					  "_gnix_vc_alloc returned %d\n",
 					  ret);
 				goto err;
 			}
@@ -1341,7 +1345,7 @@ int _gnix_ep_get_vc(struct gnix_fid_ep *ep, fi_addr_t dest_addr,
 				ret = _gnix_vc_connect(vc);
 				if (ret != FI_SUCCESS) {
 					GNIX_WARN(FI_LOG_EP_DATA,
-						"_gnix_ht_connect returned %d\n",
+						"_gnix_vc_connect returned %d\n",
 						   ret);
 					goto err;
 				}
@@ -1371,13 +1375,13 @@ int _gnix_ep_get_vc(struct gnix_fid_ep *ep, fi_addr_t dest_addr,
 				ret = _gnix_vc_connect(vc);
 				if (ret != FI_SUCCESS) {
 					GNIX_WARN(FI_LOG_EP_DATA,
-						  "_gnix_ht_connect returned %d\n",
+						  "_gnix_vc_connect returned %d\n",
 						   ret);
 					goto err;
 				}
 			} else {
 				GNIX_WARN(FI_LOG_EP_DATA,
-					  "_gnix_ht_alloc returned %d\n",
+					  "_gnix_vc_alloc returned %d\n",
 					   ret);
 				goto err;
 			}
@@ -1390,5 +1394,29 @@ err:
 	if (vc != NULL)
 		_gnix_vc_destroy(vc);
 	return ret;
+}
+
+int _gnix_ep_get_vc(struct gnix_fid_ep *ep, fi_addr_t dest_addr,
+			struct gnix_vc **vc_ptr)
+{
+	int ret;
+
+	if (ep->type == FI_EP_RDM) {
+		ret = __gnix_ep_get_vc(ep, dest_addr, vc_ptr);
+		if (unlikely(ret != FI_SUCCESS)) {
+			GNIX_WARN(FI_LOG_EP_DATA,
+				  "__gnix_ep_get_vc returned %d\n",
+				   ret);
+			return ret;
+		}
+	} else if (ep->type == FI_EP_MSG) {
+		*vc_ptr = ep->vc;
+	} else {
+		GNIX_WARN(FI_LOG_EP_DATA, "Invalid endpoitn type: %d\n",
+			  ep->type);
+		return -FI_EINVAL;
+	}
+
+	return FI_SUCCESS;
 }
 

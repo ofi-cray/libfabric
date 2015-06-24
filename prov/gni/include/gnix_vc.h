@@ -201,4 +201,21 @@ static inline enum gnix_vc_conn_state _gnix_vc_state(struct gnix_vc *vc)
 int _gnix_vc_push_tx_reqs(struct gnix_vc *vc);
 int _gnix_vc_queue_tx_req(struct gnix_fab_req *req);
 
+/**
+ * @brief  return vc associated with a given ep/dest address, or the ep in the
+ *         case of FI_EP_MSG endpoint type.  For FI_EP_RDM type, a vc may be
+ *         allocated and a connection initiated if no vc is associated with
+ *         ep/dest_addr.
+ *
+ * @param[in] ep        pointer to a previously allocated endpoint
+ * @param[in] dest_addr for FI_EP_RDM endpoints, used to look up vc associated
+ *                      with this target address
+ * @param[out] vc_ptr   address in which to store pointer to returned vc
+ * @return              FI_SUCCESS on success, -FI_ENOMEM insufficient
+ *                      memory to allocate vc, -FI_EINVAL if an invalid
+ *                      argument was supplied
+ */
+int _gnix_ep_get_vc(struct gnix_fid_ep *ep, fi_addr_t dest_addr,
+		    struct gnix_vc **vc_ptr);
+
 #endif /* _GNIX_VC_H_ */

@@ -103,6 +103,16 @@ extern "C" {
 #endif
 
 /*
+ * Flags
+ * The 64-bit flag field is used as follows:
+ * 1-grow up    common (usable with multiple operations)
+ * 59-grow down operation specific (used for single call/class)
+ * 60 - 63      provider specific
+ */
+
+#define GNIX_SUPPRESS_COMPLETION (1ULL << 60)
+
+/*
  * Cray gni provider supported flags for fi_getinfo argument for now, needs
  * refining (see fi_getinfo.3 man page)
  */

@@ -776,7 +776,7 @@ static ssize_t gnix_ep_rma_inject(struct fid_ep *ep, const void *buf,
 	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
 	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
 
-	flags = gnix_ep->op_flags | FI_INJECT;
+	flags = gnix_ep->op_flags | FI_INJECT | GNIX_SUPPRESS_COMPLETION;
 
 	return _gnix_rma(gnix_ep, GNIX_FAB_RQ_RDMA_WRITE,
 			 (uint64_t)buf, len, NULL,
@@ -822,16 +822,14 @@ static ssize_t gnix_ep_rma_injectdata(struct fid_ep *ep, const void *buf,
 	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
 	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
 
-	flags = gnix_ep->op_flags | FI_INJECT | FI_REMOTE_CQ_DATA;
+	flags = gnix_ep->op_flags | FI_INJECT | FI_REMOTE_CQ_DATA |
+			GNIX_SUPPRESS_COMPLETION;
 
 	return _gnix_rma(gnix_ep, GNIX_FAB_RQ_RDMA_WRITE,
 			 (uint64_t)buf, len, NULL,
 			 dest_addr, addr, key,
 			 NULL, flags, data);
 }
-
-
-
 
 /*******************************************************************************
  * EP Tag matching API function implementations.

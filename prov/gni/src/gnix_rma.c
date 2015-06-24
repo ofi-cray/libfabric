@@ -52,9 +52,7 @@ static int __gnix_rma_fab_req_complete(void *arg)
 
 	/* more transaction needed for request? */
 
-	/* write completions */
-	if (ep->send_cq && (!ep->send_selective_completion ||
-			    (req->flags & FI_COMPLETION))) {
+	if (req->flags & FI_COMPLETION) {
 		rc = _gnix_cq_add_event(ep->send_cq, req->user_context,
 					req->flags, req->len,
 					(void *)req->loc_addr,
@@ -202,6 +200,16 @@ ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
 	req->rma.rem_mr_key = mkey;
 	req->len = len;
 	req->flags = flags;
+
+	/* Inject interfaces always suppress completions.  If
+	 * SELECTIVE_COMPLETION is set, honor any setting.  Otherwise, always
+	 * deliver a completion. */
+	if ((flags & GNIX_SUPPRESS_COMPLETION) ||
+	    (ep->send_selective_completion && !(flags & FI_COMPLETION))) {
+		req->flags &= ~FI_COMPLETION;
+	} else {
+		req->flags |= FI_COMPLETION;
+	}
 
 	return _gnix_vc_queue_tx_req(req);
 }

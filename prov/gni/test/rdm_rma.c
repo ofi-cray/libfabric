@@ -328,9 +328,7 @@ Test(rdm_rma, writemsg)
 
 Test(rdm_rma, inject_write)
 {
-	int ret;
 	ssize_t sz;
-	struct fi_cq_entry cqe;
 
 	init_data(source, BUF_SZ, 0xdeadbeefbeef4123);
 	init_data(target, BUF_SZ, 0);
@@ -338,14 +336,7 @@ Test(rdm_rma, inject_write)
 			     gni_addr[1], (uint64_t)&target, mr_key);
 	cr_assert_eq(sz, 0);
 
-	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
-		pthread_yield();
-	}
-
-	cr_assert_eq(ret, 1);
-	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
-
-	dbg_printf("got write context event!\n");
+	/* TODO sync */
 
 	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
 }
@@ -378,9 +369,7 @@ Test(rdm_rma, writedata)
 
 Test(rdm_rma, inject_writedata)
 {
-	int ret;
 	ssize_t sz;
-	struct fi_cq_entry cqe;
 
 #define INJECT_WRITE_DATA 0x5123da1a
 	init_data(source, BUF_SZ, 0xdeadbeefbeef4123);
@@ -390,14 +379,7 @@ Test(rdm_rma, inject_writedata)
 				 gni_addr[1], (uint64_t)&target, mr_key);
 	cr_assert_eq(sz, 0);
 
-	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
-		pthread_yield();
-	}
-
-	cr_assert_eq(ret, 1);
-	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
-
-	dbg_printf("got write context event!\n");
+	/* TODO sync */
 
 	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
 }

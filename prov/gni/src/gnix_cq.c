@@ -297,6 +297,7 @@ ssize_t _gnix_cq_add_event(struct gnix_fid_cq *cq, void *op_context,
 			len, buf, data, tag);
 
 	_gnix_queue_enqueue(cq->events, &event->item);
+	GNIX_INFO(FI_LOG_CQ, "Added event: %lx\n", op_context);
 
 	if (cq->wait)
 		_gnix_signal_wait_obj(cq->wait);

@@ -906,6 +906,7 @@ int _gnix_vc_alloc(struct gnix_fid_ep *ep_priv, fi_addr_t dest_addr,
 	vc_ptr->ep = ep_priv;
 	atomic_inc(&ep_priv->ref_cnt);
 	slist_init(&vc_ptr->tx_queue);
+	atomic_initialize(&vc_ptr->outstanding_tx_reqs, 0);
 
 	/*
 	 * we need an id for the vc to allow for quick lookup
@@ -1229,24 +1230,35 @@ int _gnix_vc_queue_tx_req(struct gnix_fab_req *req)
 	struct gnix_vc *vc = req->vc;
 	int rc;
 
-	if (likely(vc->conn_state == GNIX_VC_CONNECTED) &&
+	/* TODO lock VC */
+
+	if ((req->flags & FI_FENCE) && atomic_get(&vc->outstanding_tx_reqs)) {
+		/* Fence request must be queued until all outstanding TX
+		 * requests are completed.  Subsequent requests will be queued
+		 * due to non-empty tx_queue. */
+		slist_insert_tail(&req->slist, &vc->tx_queue);
+		GNIX_INFO(FI_LOG_EP_DATA,
+			  "Queued FI_FENCE request (%p) on VC\n",
+			  req);
+	} else if (likely(vc->conn_state == GNIX_VC_CONNECTED) &&
 		   slist_empty(&vc->tx_queue)) {
-		/* try post */
+		/* try to initiate request */
 		rc = req->send_fn(req);
 		if (rc) {
-			/* queue request, TODO locking */
 			slist_insert_tail(&req->slist, &vc->tx_queue);
 			GNIX_INFO(FI_LOG_EP_DATA,
 				  "Queued request (%p) on full VC\n",
 				  req);
 		}
+		atomic_inc(&vc->outstanding_tx_reqs);
 	} else {
-		/* queue request, TODO locking */
 		slist_insert_tail(&req->slist, &vc->tx_queue);
 		GNIX_INFO(FI_LOG_EP_DATA,
-			  "Queued request (%p) on connecting VC\n",
+			  "Queued request (%p) on busy VC\n",
 			  req);
 	}
+
+	/* TODO unlock VC */
 
 	return FI_SUCCESS;
 }
@@ -1259,18 +1271,18 @@ int _gnix_vc_push_tx_reqs(struct gnix_vc *vc)
 	struct gnix_fab_req *req;
 
 	/*
-	 * if vc is not in connected state can't push sends
+	 * TODO: lock VC
+	 */
+
+	/*
+	 * if VC is not in connected state can't push sends
 	 */
 
 	if (vc->conn_state != GNIX_VC_CONNECTED)
 		return -FI_EAGAIN;
 
 	/*
-	 * TODO: quick return if no TXDs
-	 */
-
-	/*
-	 * TODO: need a lock for send queue
+	 * TODO: Quick return if no TXDs
 	 */
 
 	list = &vc->tx_queue;
@@ -1279,6 +1291,15 @@ int _gnix_vc_push_tx_reqs(struct gnix_vc *vc)
 		req = (struct gnix_fab_req *)container_of(item,
 							  struct gnix_fab_req,
 							  slist);
+
+		if ((req->flags & FI_FENCE) &&
+		    atomic_get(&vc->outstanding_tx_reqs)) {
+			GNIX_INFO(FI_LOG_EP_DATA,
+				  "TX request queue stalled on FI_FENCE request: %p (%d)\n",
+				  req, atomic_get(&vc->outstanding_tx_reqs));
+			break;
+		}
+
 		ret = req->send_fn(req);
 		if (ret == -EAGAIN) {
 			GNIX_INFO(FI_LOG_EP_DATA,
@@ -1290,6 +1311,7 @@ int _gnix_vc_push_tx_reqs(struct gnix_vc *vc)
 				  "Failed to push TX request %p: %d\n",
 				  req, ret);
 		} else {
+			atomic_inc(&vc->outstanding_tx_reqs);
 			GNIX_INFO(FI_LOG_EP_DATA,
 				  "TX request processed: %p\n",
 				  req);
@@ -1300,7 +1322,7 @@ int _gnix_vc_push_tx_reqs(struct gnix_vc *vc)
 	}
 
 	/*
-	 * release tx_queue lock
+	 * TODO: unlock VC
 	 */
 
 	return ret;

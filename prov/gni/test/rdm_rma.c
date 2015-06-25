@@ -326,6 +326,75 @@ Test(rdm_rma, writemsg)
 	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
 }
 
+/*
+ * write_fence should be validated by inspecting debug.
+ *
+ * The following sequence of events should be seen:
+ *
+ * TX request processed: A
+ * TX request queue stalled on FI_FENCE request: B
+ * Added event: A
+ * TX request processed: B
+ *
+ */
+
+Test(rdm_rma, write_fence)
+{
+	int ret;
+	ssize_t sz;
+	struct fi_cq_entry cqe;
+	struct iovec iov;
+	struct fi_msg_rma msg;
+	struct fi_rma_iov rma_iov;
+
+	iov.iov_base = source;
+	iov.iov_len = sizeof(source);
+
+	rma_iov.addr = (uint64_t)target;
+	rma_iov.len = sizeof(target);
+	rma_iov.key = mr_key;
+
+	msg.msg_iov = &iov;
+	msg.desc = (void **)&loc_mr;
+	msg.iov_count = 1;
+	msg.addr = gni_addr[1];
+	msg.rma_iov = &rma_iov;
+	msg.rma_iov_count = 1;
+	msg.context = target;
+	msg.data = (uint64_t)target;
+
+	init_data(source, BUF_SZ, 0xdeadbeefbeef);
+	init_data(target, BUF_SZ, 0);
+
+	/* write A */
+	sz = fi_writemsg(ep[0], &msg, 0);
+	cr_assert_eq(sz, 0);
+
+	/* write B */
+	sz = fi_writemsg(ep[0], &msg, FI_FENCE);
+	cr_assert_eq(sz, 0);
+
+	/* event A */
+	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
+		pthread_yield();
+	}
+
+	cr_assert_eq(ret, 1);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
+
+	/* event B */
+	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
+		pthread_yield();
+	}
+
+	cr_assert_eq(ret, 1);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
+
+	dbg_printf("got write context event!\n");
+
+	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+}
+
 Test(rdm_rma, inject_write)
 {
 	ssize_t sz;

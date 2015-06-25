@@ -63,6 +63,11 @@ static int __gnix_rma_fab_req_complete(void *arg)
 		}
 	}
 
+	/* We could have requests waiting for TXDs or FI_FENCE operations.  Try
+	 * to push the queue now. */
+	atomic_dec(&req->vc->outstanding_tx_reqs);
+	_gnix_vc_push_tx_reqs(req->vc);
+
 	_gnix_fr_free(ep, req);
 
 	return FI_SUCCESS;

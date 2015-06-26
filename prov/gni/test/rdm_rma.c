@@ -57,7 +57,15 @@
 
 #include <criterion/criterion.h>
 
+#if 1
 #define dbg_printf(...)
+#else
+#define dbg_printf(...)		\
+do {				\
+	printf(__VA_ARGS__);	\
+	fflush(stdout);		\
+} while (0)
+#endif
 
 static struct fid_fabric *fab;
 static struct fid_domain *dom;
@@ -70,9 +78,9 @@ size_t gni_addr[2];
 static struct fid_cq *send_cq;
 static struct fi_cq_attr cq_attr;
 
-#define BUF_SZ 4096
-uint64_t target[BUF_SZ];
-uint64_t source[BUF_SZ];
+#define BUF_SZ (64*1024)
+char *target;
+char *source;
 struct fid_mr *rem_mr, *loc_mr;
 uint64_t mr_key;
 
@@ -156,11 +164,17 @@ void rdm_rma_setup(void)
 	ret = fi_enable(ep[1]);
 	cr_assert(!ret, "fi_ep_enable");
 
-	ret = fi_mr_reg(dom, &target, sizeof(target),
+	target = malloc(BUF_SZ);
+	assert(target);
+
+	source = malloc(BUF_SZ);
+	assert(source);
+
+	ret = fi_mr_reg(dom, target, BUF_SZ,
 			FI_REMOTE_WRITE, 0, 0, 0, &rem_mr, &target);
 	cr_assert_eq(ret, 0);
 
-	ret = fi_mr_reg(dom, &source, sizeof(source),
+	ret = fi_mr_reg(dom, source, BUF_SZ,
 			FI_REMOTE_WRITE, 0, 0, 0, &loc_mr, &source);
 	cr_assert_eq(ret, 0);
 
@@ -173,6 +187,9 @@ void rdm_rma_teardown(void)
 
 	fi_close(&loc_mr->fid);
 	fi_close(&rem_mr->fid);
+
+	free(target);
+	free(source);
 
 	ret = fi_close(&ep[0]->fid);
 	cr_assert(!ret, "failure in closing ep.");
@@ -198,7 +215,7 @@ void rdm_rma_teardown(void)
 	free(ep_name[1]);
 }
 
-void init_data(uint64_t *buf, int len, uint64_t seed)
+void init_data(char *buf, int len, char seed)
 {
 	int i;
 
@@ -207,15 +224,14 @@ void init_data(uint64_t *buf, int len, uint64_t seed)
 	}
 }
 
-int check_data(uint64_t *buf1, uint64_t *buf2, int len)
+int check_data(char *buf1, char *buf2, int len)
 {
 	int i;
 
 	for (i = 0; i < len; i++) {
 		if (buf1[i] != buf2[i]) {
-			printf("data mismatch, elem: %d, exp: %lx, act: %lx\n",
+			printf("data mismatch, elem: %d, exp: %x, act: %x\n",
 			       i, buf1[i], buf2[i]);
-			fflush(stdout);
 			return 0;
 		}
 	}
@@ -223,24 +239,35 @@ int check_data(uint64_t *buf1, uint64_t *buf2, int len)
 	return 1;
 }
 
+;
+
+void xfer_for_each_size(void (*xfer)(int len), int slen, int elen)
+{
+	int i;
+
+	for (i = slen; i <= elen; i *= 2) {
+		xfer(i);
+	}
+}
+
 /*******************************************************************************
- * Test vc functions.
+ * Test RMA functions
  ******************************************************************************/
 
 TestSuite(rdm_rma, .init = rdm_rma_setup, .fini = rdm_rma_teardown,
 	  .disabled = false);
 
-Test(rdm_rma, write)
+void do_write(int len)
 {
 	int ret;
 	ssize_t sz;
 	struct fi_cq_entry cqe;
 
-	init_data(source, BUF_SZ, 0xdeadbeefbeef4123);
-	init_data(target, BUF_SZ, 0);
-	sz = fi_write(ep[0], source, sizeof(target),
-			 loc_mr, gni_addr[1], (uint64_t)&target, mr_key,
-			 &target);
+	init_data(source, len, 0xab);
+	init_data(target, len, 0);
+	sz = fi_write(ep[0], source, len,
+			 loc_mr, gni_addr[1], (uint64_t)target, mr_key,
+			 target);
 	cr_assert_eq(sz, 0);
 
 	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
@@ -248,14 +275,19 @@ Test(rdm_rma, write)
 	}
 
 	cr_assert_eq(ret, 1);
-	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)target);
 
 	dbg_printf("got write context event!\n");
 
-	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+	cr_assert(check_data(source, target, len), "Data mismatch");
 }
 
-Test(rdm_rma, writev)
+Test(rdm_rma, write)
+{
+	xfer_for_each_size(do_write, 8, BUF_SZ);
+}
+
+void do_writev(int len)
 {
 	int ret;
 	ssize_t sz;
@@ -263,13 +295,13 @@ Test(rdm_rma, writev)
 	struct iovec iov;
 
 	iov.iov_base = source;
-	iov.iov_len = sizeof(source);
+	iov.iov_len = len;
 
-	init_data(source, BUF_SZ, 0xdeadbeefbeef4125);
-	init_data(target, BUF_SZ, 0);
+	init_data(source, len, 0x25);
+	init_data(target, len, 0);
 	sz = fi_writev(ep[0], &iov, (void **)&loc_mr, 1,
-		       gni_addr[1], (uint64_t)&target, mr_key,
-		       &target);
+		       gni_addr[1], (uint64_t)target, mr_key,
+		       target);
 	cr_assert_eq(sz, 0);
 
 	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
@@ -277,14 +309,19 @@ Test(rdm_rma, writev)
 	}
 
 	cr_assert_eq(ret, 1);
-	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)target);
 
 	dbg_printf("got write context event!\n");
 
-	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+	cr_assert(check_data(source, target, len), "Data mismatch");
 }
 
-Test(rdm_rma, writemsg)
+Test(rdm_rma, writev)
+{
+	xfer_for_each_size(do_writev, 8, BUF_SZ);
+}
+
+void do_writemsg(int len)
 {
 	int ret;
 	ssize_t sz;
@@ -294,10 +331,10 @@ Test(rdm_rma, writemsg)
 	struct fi_rma_iov rma_iov;
 
 	iov.iov_base = source;
-	iov.iov_len = sizeof(source);
+	iov.iov_len = len;
 
 	rma_iov.addr = (uint64_t)target;
-	rma_iov.len = sizeof(target);
+	rma_iov.len = len;
 	rma_iov.key = mr_key;
 
 	msg.msg_iov = &iov;
@@ -309,8 +346,8 @@ Test(rdm_rma, writemsg)
 	msg.context = target;
 	msg.data = (uint64_t)target;
 
-	init_data(source, BUF_SZ, 0xdeadbeefbeef);
-	init_data(target, BUF_SZ, 0);
+	init_data(source, len, 0xef);
+	init_data(target, len, 0);
 	sz = fi_writemsg(ep[0], &msg, 0);
 	cr_assert_eq(sz, 0);
 
@@ -319,11 +356,16 @@ Test(rdm_rma, writemsg)
 	}
 
 	cr_assert_eq(ret, 1);
-	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)target);
 
 	dbg_printf("got write context event!\n");
 
-	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+	cr_assert(check_data(source, target, len), "Data mismatch");
+}
+
+Test(rdm_rma, writemsg)
+{
+	xfer_for_each_size(do_writemsg, 8, BUF_SZ);
 }
 
 /*
@@ -338,7 +380,7 @@ Test(rdm_rma, writemsg)
  *
  */
 
-Test(rdm_rma, write_fence)
+void do_write_fence(int len)
 {
 	int ret;
 	ssize_t sz;
@@ -348,7 +390,7 @@ Test(rdm_rma, write_fence)
 	struct fi_rma_iov rma_iov;
 
 	iov.iov_base = source;
-	iov.iov_len = sizeof(source);
+	iov.iov_len = len;
 
 	rma_iov.addr = (uint64_t)target;
 	rma_iov.len = sizeof(target);
@@ -363,8 +405,8 @@ Test(rdm_rma, write_fence)
 	msg.context = target;
 	msg.data = (uint64_t)target;
 
-	init_data(source, BUF_SZ, 0xdeadbeefbeef);
-	init_data(target, BUF_SZ, 0);
+	init_data(source, len, 0xef);
+	init_data(target, len, 0);
 
 	/* write A */
 	sz = fi_writemsg(ep[0], &msg, 0);
@@ -380,7 +422,7 @@ Test(rdm_rma, write_fence)
 	}
 
 	cr_assert_eq(ret, 1);
-	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)target);
 
 	/* event B */
 	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
@@ -388,40 +430,61 @@ Test(rdm_rma, write_fence)
 	}
 
 	cr_assert_eq(ret, 1);
-	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)target);
 
 	dbg_printf("got write context event!\n");
 
-	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+	cr_assert(check_data(source, target, len), "Data mismatch");
+}
+
+Test(rdm_rma, write_fence)
+{
+	xfer_for_each_size(do_write_fence, 8, BUF_SZ);
+}
+
+#define INJECT_SIZE 64
+void do_inject_write(int len)
+{
+	ssize_t sz;
+	int ret, i, loops = 0;
+	struct fi_cq_entry cqe;
+
+	init_data(source, len, 0x23);
+	init_data(target, len, 0);
+	sz = fi_inject_write(ep[0], source, INJECT_SIZE,
+			     gni_addr[1], (uint64_t)target, mr_key);
+	cr_assert_eq(sz, 0);
+
+	for (i = 0; i < INJECT_SIZE; i++) {
+		loops = 0;
+		while (source[i] != target[i]) {
+			ret = fi_cq_read(send_cq, &cqe, 1); /* for progress */
+			cr_assert(ret == -EAGAIN,
+				  "Received unexpected event\n");
+
+			pthread_yield();
+			cr_assert(++loops < 10000, "Data mismatch");
+		}
+	}
 }
 
 Test(rdm_rma, inject_write)
 {
-	ssize_t sz;
-
-	init_data(source, BUF_SZ, 0xdeadbeefbeef4123);
-	init_data(target, BUF_SZ, 0);
-	sz = fi_inject_write(ep[0], source, sizeof(target),
-			     gni_addr[1], (uint64_t)&target, mr_key);
-	cr_assert_eq(sz, 0);
-
-	/* TODO sync */
-
-	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+	xfer_for_each_size(do_inject_write, 8, BUF_SZ);
 }
 
-Test(rdm_rma, writedata)
+void do_writedata(int len)
 {
 	int ret;
 	ssize_t sz;
 	struct fi_cq_entry cqe;
 
 #define WRITE_DATA 0x5123da1a145
-	init_data(source, BUF_SZ, 0xdeadbeefbeef4123);
-	init_data(target, BUF_SZ, 0);
-	sz = fi_writedata(ep[0], source, sizeof(target), loc_mr, WRITE_DATA,
-			 gni_addr[1], (uint64_t)&target, mr_key,
-			 &target);
+	init_data(source, len, 0x23);
+	init_data(target, len, 0);
+	sz = fi_writedata(ep[0], source, len, loc_mr, WRITE_DATA,
+			 gni_addr[1], (uint64_t)target, mr_key,
+			 target);
 	cr_assert_eq(sz, 0);
 
 	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
@@ -429,43 +492,60 @@ Test(rdm_rma, writedata)
 	}
 
 	cr_assert_eq(ret, 1);
-	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)&target);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)target);
 
 	dbg_printf("got write context event!\n");
 
-	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+	cr_assert(check_data(source, target, len), "Data mismatch");
+}
+
+Test(rdm_rma, writedata)
+{
+	xfer_for_each_size(do_writedata, 8, BUF_SZ);
+}
+
+#define INJECTWRITE_DATA 0xdededadadeadbeaf
+void do_inject_writedata(int len)
+{
+	ssize_t sz;
+	int ret, i, loops = 0;
+	struct fi_cq_entry cqe;
+
+	init_data(source, len, 0x23);
+	init_data(target, len, 0);
+	sz = fi_inject_writedata(ep[0], source, INJECT_SIZE, INJECTWRITE_DATA,
+				 gni_addr[1], (uint64_t)target, mr_key);
+	cr_assert_eq(sz, 0);
+
+	for (i = 0; i < INJECT_SIZE; i++) {
+		loops = 0;
+		while (source[i] != target[i]) {
+			ret = fi_cq_read(send_cq, &cqe, 1); /* for progress */
+			cr_assert(ret == -EAGAIN,
+				  "Received unexpected event\n");
+
+			pthread_yield();
+			cr_assert(++loops < 10000, "Data mismatch");
+		}
+	}
 }
 
 Test(rdm_rma, inject_writedata)
 {
-	ssize_t sz;
-
-#define INJECT_WRITE_DATA 0x5123da1a
-	init_data(source, BUF_SZ, 0xdeadbeefbeef4123);
-	init_data(target, BUF_SZ, 0);
-	sz = fi_inject_writedata(ep[0], source, sizeof(target),
-				 INJECT_WRITE_DATA,
-				 gni_addr[1], (uint64_t)&target, mr_key);
-	cr_assert_eq(sz, 0);
-
-	/* TODO sync */
-
-	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+	xfer_for_each_size(do_inject_writedata, 8, BUF_SZ);
 }
 
-
-
-Test(rdm_rma, read)
+void do_read(int len)
 {
 	int ret;
 	ssize_t sz;
 	struct fi_cq_entry cqe;
 
 #define READ_CTX 0x4e3dda1aULL
-	init_data(source, BUF_SZ, 0);
-	init_data(target, BUF_SZ, 0xdeadbeefbeef43ad);
-	sz = fi_read(ep[0], source, sizeof(target),
-			loc_mr, gni_addr[1], (uint64_t)&target, mr_key,
+	init_data(source, len, 0);
+	init_data(target, len, 0xad);
+	sz = fi_read(ep[0], source, len,
+			loc_mr, gni_addr[1], (uint64_t)target, mr_key,
 			(void *)READ_CTX);
 	cr_assert_eq(sz, 0);
 
@@ -478,5 +558,140 @@ Test(rdm_rma, read)
 
 	dbg_printf("got read context event!\n");
 
-	cr_assert(check_data(source, target, BUF_SZ), "Data mismatch");
+	cr_assert(check_data(source, target, len), "Data mismatch");
 }
+
+Test(rdm_rma, read)
+{
+	xfer_for_each_size(do_read, 8, BUF_SZ);
+}
+
+void do_readv(int len)
+{
+	int ret;
+	ssize_t sz;
+	struct fi_cq_entry cqe;
+	struct iovec iov;
+
+	iov.iov_base = source;
+	iov.iov_len = len;
+
+	init_data(target, len, 0x25);
+	init_data(source, len, 0);
+	sz = fi_readv(ep[0], &iov, (void **)&loc_mr, 1,
+		       gni_addr[1], (uint64_t)target, mr_key,
+		       target);
+	cr_assert_eq(sz, 0);
+
+	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
+		pthread_yield();
+	}
+
+	cr_assert_eq(ret, 1);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)target);
+
+	dbg_printf("got write context event!\n");
+
+	cr_assert(check_data(source, target, len), "Data mismatch");
+}
+
+Test(rdm_rma, readv)
+{
+	xfer_for_each_size(do_readv, 8, BUF_SZ);
+}
+
+void do_readmsg(int len)
+{
+	int ret;
+	ssize_t sz;
+	struct fi_cq_entry cqe;
+	struct iovec iov;
+	struct fi_msg_rma msg;
+	struct fi_rma_iov rma_iov;
+
+	iov.iov_base = source;
+	iov.iov_len = len;
+
+	rma_iov.addr = (uint64_t)target;
+	rma_iov.len = len;
+	rma_iov.key = mr_key;
+
+	msg.msg_iov = &iov;
+	msg.desc = (void **)&loc_mr;
+	msg.iov_count = 1;
+	msg.addr = gni_addr[1];
+	msg.rma_iov = &rma_iov;
+	msg.rma_iov_count = 1;
+	msg.context = target;
+	msg.data = (uint64_t)target;
+
+	init_data(target, len, 0xef);
+	init_data(source, len, 0);
+	sz = fi_readmsg(ep[0], &msg, 0);
+	cr_assert_eq(sz, 0);
+
+	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
+		pthread_yield();
+	}
+
+	cr_assert_eq(ret, 1);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)target);
+
+	dbg_printf("got write context event!\n");
+
+	cr_assert(check_data(source, target, len), "Data mismatch");
+}
+
+Test(rdm_rma, readmsg)
+{
+	xfer_for_each_size(do_readmsg, 8, BUF_SZ);
+}
+
+Test(rdm_rma, inject)
+{
+	int ret;
+	ssize_t sz;
+	struct fi_cq_entry cqe;
+	struct iovec iov;
+	struct fi_msg_rma msg;
+	struct fi_rma_iov rma_iov;
+
+	iov.iov_base = source;
+	iov.iov_len = GNIX_INJECT_SIZE;
+
+	rma_iov.addr = (uint64_t)target;
+	rma_iov.len = GNIX_INJECT_SIZE;
+	rma_iov.key = mr_key;
+
+	msg.msg_iov = &iov;
+	msg.desc = (void **)&loc_mr;
+	msg.iov_count = 1;
+	msg.addr = gni_addr[1];
+	msg.rma_iov = &rma_iov;
+	msg.rma_iov_count = 1;
+	msg.context = target;
+	msg.data = (uint64_t)target;
+
+	init_data(source, GNIX_INJECT_SIZE, 0xef);
+	init_data(target, GNIX_INJECT_SIZE, 0);
+
+	sz = fi_writemsg(ep[0], &msg, FI_INJECT);
+	cr_assert_eq(sz, 0);
+
+	iov.iov_len = GNIX_INJECT_SIZE+1;
+	sz = fi_writemsg(ep[0], &msg, FI_INJECT);
+	cr_assert_eq(sz, -FI_EINVAL);
+
+	while ((ret = fi_cq_read(send_cq, &cqe, 1)) == -FI_EAGAIN) {
+		pthread_yield();
+	}
+
+	cr_assert_eq(ret, 1);
+	cr_assert_eq((uint64_t)cqe.op_context, (uint64_t)target);
+
+	dbg_printf("got write context event!\n");
+
+	cr_assert(check_data(source, target, GNIX_INJECT_SIZE),
+		  "Data mismatch");
+}
+

@@ -110,7 +110,8 @@ extern "C" {
  * 60 - 63      provider specific
  */
 
-#define GNIX_SUPPRESS_COMPLETION (1ULL << 60)
+#define GNIX_SUPPRESS_COMPLETION	(1ULL << 60)	/* TX only flag */
+#define GNIX_RMA_RDMA			(1ULL << 61)	/* RMA only flag */
 
 /*
  * Cray gni provider supported flags for fi_getinfo argument for now, needs
@@ -395,6 +396,7 @@ struct gnix_fab_req {
 		struct gnix_fab_req_rma rma;
 		struct gnix_fab_req_msg msg;
 	};
+	char inject_buf[GNIX_INJECT_SIZE];
 };
 
 /*

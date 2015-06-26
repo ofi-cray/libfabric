@@ -82,31 +82,35 @@ static int __gnix_rma_txd_complete(void *arg)
 	return txd->desc.req->completer_fn(txd->desc.req->completer_data);
 }
 
-static gni_post_type_t __gnix_fr_post_type(int fr_type)
+static gni_post_type_t __gnix_fr_post_type(int fr_type, int rdma)
 {
 	switch (fr_type) {
 	case GNIX_FAB_RQ_RDMA_WRITE:
-		return GNI_POST_RDMA_PUT;
+		return rdma ? GNI_POST_RDMA_PUT : GNI_POST_FMA_PUT;
 	case GNIX_FAB_RQ_RDMA_READ:
-		return GNI_POST_RDMA_GET;
+		return rdma ? GNI_POST_RDMA_GET : GNI_POST_FMA_GET;
 	default:
 		break;
 	}
 
 	GNIX_WARN(FI_LOG_EP_DATA, "Unsupported post type: %d", fr_type);
+	assert(0);
 	return -FI_ENOSYS;
 }
+
+#define GNIX_RMA_RDMA_THRESH (8*1024)
 
 int _gnix_rma_post_req(void *data)
 {
 	struct gnix_fab_req *fab_req = (struct gnix_fab_req *)data;
 	struct gnix_fid_ep *ep = fab_req->gnix_ep;
 	struct gnix_nic *nic = ep->nic;
-	struct gnix_fid_mem_desc *md;
+	struct gnix_fid_mem_desc *loc_md;
 	struct gnix_tx_descriptor *txd;
 	gni_mem_handle_t mdh;
 	gni_return_t status;
 	int rc;
+	int rdma = !!(fab_req->flags & GNIX_RMA_RDMA);
 
 	fastlock_acquire(&nic->lock);
 
@@ -123,14 +127,16 @@ int _gnix_rma_post_req(void *data)
 
 	_gnix_convert_key_to_mhdl((gnix_mr_key_t *)&fab_req->rma.rem_mr_key,
 				  &mdh);
-	md = (struct gnix_fid_mem_desc *)fab_req->rma.loc_md;
+	loc_md = (struct gnix_fid_mem_desc *)fab_req->rma.loc_md;
 
 	//txd->desc.gni_desc.post_id = (uint64_t)fab_req; /* unused */
-	txd->desc.gni_desc.type = __gnix_fr_post_type(fab_req->type);
+	txd->desc.gni_desc.type = __gnix_fr_post_type(fab_req->type, rdma);
 	txd->desc.gni_desc.cq_mode = GNI_CQMODE_GLOBAL_EVENT; /* check flags */
 	txd->desc.gni_desc.dlvr_mode = GNI_DLVMODE_PERFORMANCE; /* check flags */
 	txd->desc.gni_desc.local_addr = (uint64_t)fab_req->loc_addr;
-	txd->desc.gni_desc.local_mem_hndl = md->mem_hndl;
+	if (loc_md) {
+		txd->desc.gni_desc.local_mem_hndl = loc_md->mem_hndl;
+	}
 	txd->desc.gni_desc.remote_addr = (uint64_t)fab_req->rma.rem_addr;
 	txd->desc.gni_desc.remote_mem_hndl = mdh;
 	txd->desc.gni_desc.length = fab_req->len;
@@ -149,9 +155,15 @@ int _gnix_rma_post_req(void *data)
 			  fab_req->rma.rem_mr_key);
 	}
 
-	status = GNI_PostRdma(fab_req->vc->gni_ep, &txd->desc.gni_desc);
+	if (rdma) {
+		status = GNI_PostRdma(fab_req->vc->gni_ep, &txd->desc.gni_desc);
+	} else {
+		status = GNI_PostFma(fab_req->vc->gni_ep, &txd->desc.gni_desc);
+	}
+
 	if (status != GNI_RC_SUCCESS) {
-		GNIX_INFO(FI_LOG_EP_DATA, "GNI_PostRdma() failed: %d\n", status);
+		GNIX_INFO(FI_LOG_EP_DATA, "GNI_Post*() failed: %s\n",
+			  gni_err_str[status]);
 	}
 
 	fastlock_release(&nic->lock);
@@ -166,11 +178,28 @@ ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
 {
 	struct gnix_vc *vc;
 	struct gnix_fab_req *req;
-	struct gnix_fid_mem_desc *md;
+	struct gnix_fid_mem_desc *md = NULL;
 	int rc;
+	int rdma;
 
-	/* TODO better validation of mdesc */
-	if (!ep || !mdesc) {
+	if (!ep) {
+		return -FI_EINVAL;
+	}
+
+	if ((flags & FI_INJECT) && (len > GNIX_INJECT_SIZE)) {
+		GNIX_INFO(FI_LOG_EP_DATA,
+			  "RMA length %d exceeds inject max size: %d\n",
+			  len, GNIX_INJECT_SIZE);
+		return -FI_EINVAL;
+	}
+
+	rdma = len >= GNIX_RMA_RDMA_THRESH;
+
+	/* need a memory descriptor for all RDMA and reads */
+	if (!mdesc && (rdma || fr_type == GNIX_FAB_RQ_RDMA_READ)) {
+		GNIX_INFO(FI_LOG_EP_DATA,
+			  "RMA of length %d requires memory descriptor\n",
+			  len);
 		return -FI_EINVAL;
 	}
 
@@ -198,13 +227,22 @@ ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
 	req->user_context = context;
 	req->send_fn = _gnix_rma_post_req;
 
-	md = container_of(mdesc, struct gnix_fid_mem_desc, mr_fid);
-	req->loc_addr = loc_addr;
+	if (mdesc) {
+		md = container_of(mdesc, struct gnix_fid_mem_desc, mr_fid);
+	}
+
 	req->rma.loc_md = (void *)md;
 	req->rma.rem_addr = rem_addr;
 	req->rma.rem_mr_key = mkey;
 	req->len = len;
 	req->flags = flags;
+
+	if (req->flags & FI_INJECT) {
+		memcpy(req->inject_buf, (void *)loc_addr, len);
+		req->loc_addr = (uint64_t)req->inject_buf;
+	} else {
+		req->loc_addr = loc_addr;
+	}
 
 	/* Inject interfaces always suppress completions.  If
 	 * SELECTIVE_COMPLETION is set, honor any setting.  Otherwise, always
@@ -214,6 +252,10 @@ ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
 		req->flags &= ~FI_COMPLETION;
 	} else {
 		req->flags |= FI_COMPLETION;
+	}
+
+	if (rdma) {
+		req->flags |= GNIX_RMA_RDMA;
 	}
 
 	return _gnix_vc_queue_tx_req(req);

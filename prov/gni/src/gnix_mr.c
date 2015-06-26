@@ -295,8 +295,8 @@ void _gnix_convert_key_to_mhdl(
 		flags |= GNI_MEMHNDL_ATTR_READONLY;
 
 	GNI_MEMHNDL_INIT((*mhdl));
-	if (key->format)
-		GNI_MEMHNDL_SET_FLAGS((*mhdl), GNI_MEMHNDL_FLAG_NEW_FRMT);
+	//if (key->format)
+	//	GNI_MEMHNDL_SET_FLAGS((*mhdl), GNI_MEMHNDL_FLAG_NEW_FRMT);
 	GNI_MEMHNDL_SET_VA((*mhdl), va);
 	GNI_MEMHNDL_SET_MDH((*mhdl), key->mdd);
 	GNI_MEMHNDL_SET_NPAGES((*mhdl), GNI_MEMHNDL_NPGS_MASK);
@@ -311,7 +311,7 @@ void _gnix_convert_mhdl_to_key(
 {
 	key->pfn = GNI_MEMHNDL_GET_VA((*mhdl)) >> GNIX_MR_PAGE_SHIFT;
 	key->mdd = GNI_MEMHNDL_GET_MDH((*mhdl));
-	key->format = GNI_MEMHNDL_NEW_FRMT((*mhdl));
+	//key->format = GNI_MEMHNDL_NEW_FRMT((*mhdl));
 	key->flags = 0;
 
 	if (GNI_MEMHNDL_GET_FLAGS((*mhdl)) & GNI_MEMHNDL_FLAG_READONLY)

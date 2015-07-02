@@ -1,5 +1,7 @@
 /*
  * Copyright (c) 2015 Cray Inc. All rights reserved.
+ * Copyright (c) 2015 Los Alamos National Security, LLC. All rights reserved.
+ *
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -205,7 +207,9 @@ static inline int __mr_cache_entry_destroy(
 {
 	gni_return_t ret;
 
+	fastlock_acquire(&entry->nic->lock);
 	ret = GNI_MemDeregister(entry->nic->gni_nic_hndl, &entry->mem_hndl);
+	fastlock_release(&entry->nic->lock);
 	if (ret == GNI_RC_SUCCESS) {
 		atomic_dec(&entry->domain->ref_cnt);
 		atomic_dec(&entry->nic->ref_cnt);
@@ -295,8 +299,8 @@ void _gnix_convert_key_to_mhdl(
 		flags |= GNI_MEMHNDL_ATTR_READONLY;
 
 	GNI_MEMHNDL_INIT((*mhdl));
-	if (key->format)
-		GNI_MEMHNDL_SET_FLAGS((*mhdl), GNI_MEMHNDL_FLAG_NEW_FRMT);
+	//if (key->format)
+	//	GNI_MEMHNDL_SET_FLAGS((*mhdl), GNI_MEMHNDL_FLAG_NEW_FRMT);
 	GNI_MEMHNDL_SET_VA((*mhdl), va);
 	GNI_MEMHNDL_SET_MDH((*mhdl), key->mdd);
 	GNI_MEMHNDL_SET_NPAGES((*mhdl), GNI_MEMHNDL_NPGS_MASK);
@@ -311,7 +315,7 @@ void _gnix_convert_mhdl_to_key(
 {
 	key->pfn = GNI_MEMHNDL_GET_VA((*mhdl)) >> GNIX_MR_PAGE_SHIFT;
 	key->mdd = GNI_MEMHNDL_GET_MDH((*mhdl));
-	key->format = GNI_MEMHNDL_NEW_FRMT((*mhdl));
+	//key->format = GNI_MEMHNDL_NEW_FRMT((*mhdl));
 	key->flags = 0;
 
 	if (GNI_MEMHNDL_GET_FLAGS((*mhdl)) & GNI_MEMHNDL_FLAG_READONLY)
@@ -725,9 +729,11 @@ static int __mr_cache_register(
 	/* TODO: should we just try the first nic we find? */
 	dlist_for_each(&domain->nic_list, nic, list)
 	{
+		fastlock_acquire(&nic->lock);
 		grc = GNI_MemRegister(nic->gni_nic_hndl, address, length,
 					dst_cq_hndl, flags,
 					vmdh_index, &entry->mem_hndl);
+		fastlock_release(&nic->lock);
 		if (grc == GNI_RC_SUCCESS)
 			break;
 	}
@@ -750,7 +756,9 @@ static int __mr_cache_register(
 		GNIX_INFO(FI_LOG_MR, "failed to insert registration "
 				"into cache, ret=%i", rc);
 
+		fastlock_acquire(&nic->lock);
 		grc = GNI_MemDeregister(nic->gni_nic_hndl, &entry->mem_hndl);
+		fastlock_release(&nic->lock);
 		if (unlikely(grc != GNI_RC_SUCCESS)) {
 			GNIX_INFO(FI_LOG_MR, "failed to deregister memory with "
 					"uGNI, ret=%s", gni_err_str[grc]);

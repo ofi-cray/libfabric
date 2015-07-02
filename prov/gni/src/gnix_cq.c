@@ -297,6 +297,7 @@ ssize_t _gnix_cq_add_event(struct gnix_fid_cq *cq, void *op_context,
 			len, buf, data, tag);
 
 	_gnix_queue_enqueue(cq->events, &event->item);
+	GNIX_INFO(FI_LOG_CQ, "Added event: %lx\n", op_context);
 
 	if (cq->wait)
 		_gnix_signal_wait_obj(cq->wait);
@@ -378,6 +379,9 @@ int _gnix_cq_poll_nic_add(struct gnix_fid_cq *cq, struct gnix_nic *nic)
 
 	rwlock_unlock(&cq->nic_lock);
 
+	GNIX_INFO(FI_LOG_CQ, "Added NIC(%p) to CQ(%p) poll list\n",
+		  nic, cq);
+
 	return FI_SUCCESS;
 }
 
@@ -392,6 +396,9 @@ int _gnix_cq_poll_nic_rem(struct gnix_fid_cq *cq, struct gnix_nic *nic)
 			if (!--pnic->ref_cnt) {
 				dlist_remove(&pnic->list);
 				free(pnic);
+				GNIX_INFO(FI_LOG_CQ,
+					  "Removed NIC(%p) from CQ(%p) poll list\n",
+					  nic, cq);
 			}
 			rwlock_unlock(&cq->nic_lock);
 			return FI_SUCCESS;

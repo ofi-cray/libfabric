@@ -82,34 +82,6 @@ int _gnix_ep_eager_msg_w_data_match(struct gnix_fid_ep *ep, void *msg,
 				    uint64_t imm, uint64_t sflags);
 
 /**
- * @brief  return vc associated with a given ep/dest address, or the ep in the
- *         case of FI_EP_MSG endpoint type.  For FI_EP_RDM type, a vc may be
- *         allocated and a connection initiated if no vc is associated with
- *         ep/dest_addr.
- *
- * @param[in] ep        pointer to a previously allocated endpoint
- * @param[in] dest_addr for FI_EP_RDM endpoints, used to look up vc associated
- *                      with this target address
- * @param[out] vc_ptr   address in which to store pointer to returned vc
- * @return              FI_SUCCESS on success, -FI_ENOMEM insufficient
- *                      memory to allocate vc, -FI_EINVAL if an invalid
- *                      argument was supplied
- */
-int _gnix_ep_get_vc(struct gnix_fid_ep *ep, fi_addr_t dest_addr,
-		    struct gnix_vc **vc_ptr);
-
-/**
- * @brief  try to push any messages on the sendq of a vc
- *
- * @param[in] vc        pointer to a previously allocated vc
- * @return              FI_SUCCESS on success meaning that no errors
- *                      were encountered trying to push any messages
- *                      on the send queue, -FI_ENOSPC insufficient
- *                      resources to send messages
- */
-int _gnix_ep_push_vc_sendq(struct gnix_vc *vc);
-
-/**
  * @brief  dequeue smsg messages that arrived before vc fully
  *         initialized at receiver
  *

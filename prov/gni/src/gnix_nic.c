@@ -122,9 +122,11 @@ static int __nic_rx_progress(struct gnix_nic *nic)
 	 * getting the nic lock
 	 */
 
+#if 0
 	status = GNI_CqTestEvent(nic->rx_cq);
 	if (status == GNI_RC_NOT_DONE)
 		return FI_SUCCESS;
+#endif
 
 	fastlock_acquire(&nic->lock);
 try_again:
@@ -442,7 +444,9 @@ int _gnix_nic_tx_alloc(struct gnix_nic *nic,
 {
 	struct dlist_entry *entry;
 
+	fastlock_acquire(&nic->tx_desc_lock);
 	if (dlist_empty(&nic->tx_desc_free_list)) {
+		fastlock_release(&nic->tx_desc_lock);
 		return -FI_ENOSPC;
 	}
 
@@ -450,6 +454,7 @@ int _gnix_nic_tx_alloc(struct gnix_nic *nic,
 	dlist_remove_init(entry);
 	dlist_insert_head(entry, &nic->tx_desc_active_list);
 	*desc = dlist_entry(entry, struct gnix_tx_descriptor, desc.list);
+	fastlock_release(&nic->tx_desc_lock);
 
 	return FI_SUCCESS;
 }
@@ -462,8 +467,10 @@ int _gnix_nic_tx_alloc(struct gnix_nic *nic,
 int _gnix_nic_tx_free(struct gnix_nic *nic,
 		      struct gnix_tx_descriptor *desc)
 {
+	fastlock_acquire(&nic->tx_desc_lock);
 	dlist_remove_init(&desc->desc.list);
 	dlist_insert_head(&desc->desc.list, &nic->tx_desc_free_list);
+	fastlock_release(&nic->tx_desc_lock);
 
 	return FI_SUCCESS;
 }
@@ -501,6 +508,7 @@ static int __gnix_nic_tx_freelist_init(struct gnix_nic *nic, int n_descs)
 	nic->max_tx_desc_id = n_descs - 1;
 	nic->tx_desc_base = desc_base;
 
+	fastlock_init(&nic->tx_desc_lock);
 err:
 	return ret;
 
@@ -512,6 +520,7 @@ err:
 static void __gnix_nic_tx_freelist_destroy(struct gnix_nic *nic)
 {
 	free(nic->tx_desc_base);
+	fastlock_destroy(&nic->tx_desc_lock);
 }
 
 /*

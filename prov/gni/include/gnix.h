@@ -103,6 +103,17 @@ extern "C" {
 #endif
 
 /*
+ * Flags
+ * The 64-bit flag field is used as follows:
+ * 1-grow up    common (usable with multiple operations)
+ * 59-grow down operation specific (used for single call/class)
+ * 60 - 63      provider specific
+ */
+
+#define GNIX_SUPPRESS_COMPLETION	(1ULL << 60)	/* TX only flag */
+#define GNIX_RMA_RDMA			(1ULL << 61)	/* RMA only flag */
+
+/*
  * Cray gni provider supported flags for fi_getinfo argument for now, needs
  * refining (see fi_getinfo.3 man page)
  */
@@ -262,6 +273,7 @@ struct gnix_fid_ep {
 	struct fid_ep ep_fid;
 	enum fi_ep_type type;
 	struct gnix_fid_domain *domain;
+	uint64_t op_flags;
 	struct gnix_fid_cq *send_cq;
 	struct gnix_fid_cq *recv_cq;
 	struct gnix_fid_av *av;
@@ -292,9 +304,9 @@ struct gnix_fid_ep {
 	int recv_selective_completion;
 	/* num. active read and write fab_reqs associated with this ep */
 	atomic_t active_fab_reqs;
+	/* note this free list will be initialized for thread safe */
 	struct gnix_s_freelist fr_freelist;
 	atomic_t ref_cnt;
-	fastlock_t lock;
 };
 
 struct gnix_addr_entry {
@@ -333,7 +345,6 @@ enum gnix_fab_req_type {
 	GNIX_FAB_RQ_SEND,
 	GNIX_FAB_RQ_TSEND,
 	GNIX_FAB_RQ_RDMA_WRITE,
-	GNIX_FAB_RQ_RDMA_WRITE_IMM_DATA,
 	GNIX_FAB_RQ_RDMA_READ,
 	GNIX_FAB_RQ_RECV,
 	GNIX_FAB_RQ_TRECV
@@ -370,6 +381,7 @@ struct gnix_fab_req {
 	   case of long messages or rdma requests greater than 4 GB */
 	void     *cur_pos;
 	struct gnix_vc *vc;
+	int (*send_fn)(void *);
 	void *completer_data;
 	int (*completer_fn)(void *);
 	uint64_t cq_flags;
@@ -384,6 +396,7 @@ struct gnix_fab_req {
 		struct gnix_fab_req_rma rma;
 		struct gnix_fab_req_msg msg;
 	};
+	char inject_buf[GNIX_INJECT_SIZE];
 };
 
 /*

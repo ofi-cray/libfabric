@@ -52,9 +52,7 @@ static int __gnix_rma_fab_req_complete(void *arg)
 
 	/* more transaction needed for request? */
 
-	/* write completions */
-	if (ep->send_cq && (!ep->send_selective_completion ||
-			    (req->flags & FI_COMPLETION))) {
+	if (req->flags & FI_COMPLETION) {
 		rc = _gnix_cq_add_event(ep->send_cq, req->user_context,
 					req->flags, req->len,
 					(void *)req->loc_addr,
@@ -64,6 +62,11 @@ static int __gnix_rma_fab_req_complete(void *arg)
 				  "_gnix_cq_add_event() failed: %d\n", rc);
 		}
 	}
+
+	/* We could have requests waiting for TXDs or FI_FENCE operations.  Try
+	 * to push the queue now. */
+	atomic_dec(&req->vc->outstanding_tx_reqs);
+	_gnix_vc_push_tx_reqs(req->vc);
 
 	_gnix_fr_free(ep, req);
 
@@ -79,31 +82,35 @@ static int __gnix_rma_txd_complete(void *arg)
 	return txd->desc.req->completer_fn(txd->desc.req->completer_data);
 }
 
-static gni_post_type_t __gnix_fr_post_type(int fr_type)
+static gni_post_type_t __gnix_fr_post_type(int fr_type, int rdma)
 {
 	switch (fr_type) {
 	case GNIX_FAB_RQ_RDMA_WRITE:
-	case GNIX_FAB_RQ_RDMA_WRITE_IMM_DATA:
-		return GNI_POST_RDMA_PUT;
+		return rdma ? GNI_POST_RDMA_PUT : GNI_POST_FMA_PUT;
 	case GNIX_FAB_RQ_RDMA_READ:
-		return GNI_POST_RDMA_GET;
+		return rdma ? GNI_POST_RDMA_GET : GNI_POST_FMA_GET;
 	default:
 		break;
 	}
 
 	GNIX_WARN(FI_LOG_EP_DATA, "Unsupported post type: %d", fr_type);
+	assert(0);
 	return -FI_ENOSYS;
 }
 
-static int __gnix_post_req(struct gnix_fab_req *fab_req)
+#define GNIX_RMA_RDMA_THRESH (8*1024)
+
+int _gnix_rma_post_req(void *data)
 {
+	struct gnix_fab_req *fab_req = (struct gnix_fab_req *)data;
 	struct gnix_fid_ep *ep = fab_req->gnix_ep;
 	struct gnix_nic *nic = ep->nic;
-	struct gnix_fid_mem_desc *md;
+	struct gnix_fid_mem_desc *loc_md;
 	struct gnix_tx_descriptor *txd;
 	gni_mem_handle_t mdh;
 	gni_return_t status;
 	int rc;
+	int rdma = !!(fab_req->flags & GNIX_RMA_RDMA);
 
 	fastlock_acquire(&nic->lock);
 
@@ -112,7 +119,7 @@ static int __gnix_post_req(struct gnix_fab_req *fab_req)
 		GNIX_INFO(FI_LOG_EP_DATA, "_gnix_nic_tx_alloc() failed: %d\n",
 			 rc);
 		fastlock_release(&nic->lock);
-		return -FI_ENOSPC;
+		return -FI_EAGAIN;
 	}
 
 	txd->desc.completer_fn = __gnix_rma_txd_complete;
@@ -120,14 +127,16 @@ static int __gnix_post_req(struct gnix_fab_req *fab_req)
 
 	_gnix_convert_key_to_mhdl((gnix_mr_key_t *)&fab_req->rma.rem_mr_key,
 				  &mdh);
-	md = (struct gnix_fid_mem_desc *)fab_req->rma.loc_md;
+	loc_md = (struct gnix_fid_mem_desc *)fab_req->rma.loc_md;
 
 	//txd->desc.gni_desc.post_id = (uint64_t)fab_req; /* unused */
-	txd->desc.gni_desc.type = __gnix_fr_post_type(fab_req->type);
+	txd->desc.gni_desc.type = __gnix_fr_post_type(fab_req->type, rdma);
 	txd->desc.gni_desc.cq_mode = GNI_CQMODE_GLOBAL_EVENT; /* check flags */
 	txd->desc.gni_desc.dlvr_mode = GNI_DLVMODE_PERFORMANCE; /* check flags */
 	txd->desc.gni_desc.local_addr = (uint64_t)fab_req->loc_addr;
-	txd->desc.gni_desc.local_mem_hndl = md->mem_hndl;
+	if (loc_md) {
+		txd->desc.gni_desc.local_mem_hndl = loc_md->mem_hndl;
+	}
 	txd->desc.gni_desc.remote_addr = (uint64_t)fab_req->rma.rem_addr;
 	txd->desc.gni_desc.remote_mem_hndl = mdh;
 	txd->desc.gni_desc.length = fab_req->len;
@@ -146,9 +155,15 @@ static int __gnix_post_req(struct gnix_fab_req *fab_req)
 			  fab_req->rma.rem_mr_key);
 	}
 
-	status = GNI_PostRdma(fab_req->vc->gni_ep, &txd->desc.gni_desc);
+	if (rdma) {
+		status = GNI_PostRdma(fab_req->vc->gni_ep, &txd->desc.gni_desc);
+	} else {
+		status = GNI_PostFma(fab_req->vc->gni_ep, &txd->desc.gni_desc);
+	}
+
 	if (status != GNI_RC_SUCCESS) {
-		GNIX_INFO(FI_LOG_EP_DATA, "GNI_PostRdma() failed: %d\n", status);
+		GNIX_INFO(FI_LOG_EP_DATA, "GNI_Post*() failed: %s\n",
+			  gni_err_str[status]);
 	}
 
 	fastlock_release(&nic->lock);
@@ -156,25 +171,51 @@ static int __gnix_post_req(struct gnix_fab_req *fab_req)
 	return gnixu_to_fi_errno(status);
 }
 
-ssize_t _gnix_rma(struct gnix_vc *vc, enum gnix_fab_req_type fr_type,
-		  uint64_t loc_addr, size_t len,
-		  void *mdesc, uint64_t rem_addr, uint64_t mkey,
+ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
+		  uint64_t loc_addr, size_t len, void *mdesc,
+		  uint64_t dest_addr, uint64_t rem_addr, uint64_t mkey,
 		  void *context, uint64_t flags, uint64_t data)
 {
-	struct gnix_fid_ep *ep = vc->ep;
+	struct gnix_vc *vc;
 	struct gnix_fab_req *req;
-	struct gnix_fid_mem_desc *md;
+	struct gnix_fid_mem_desc *md = NULL;
 	int rc;
+	int rdma;
 
-	/* I need a connected VC and valid local memory descriptor */
-	if (!vc || !mdesc) {
+	if (!ep) {
 		return -FI_EINVAL;
+	}
+
+	if ((flags & FI_INJECT) && (len > GNIX_INJECT_SIZE)) {
+		GNIX_INFO(FI_LOG_EP_DATA,
+			  "RMA length %d exceeds inject max size: %d\n",
+			  len, GNIX_INJECT_SIZE);
+		return -FI_EINVAL;
+	}
+
+	rdma = len >= GNIX_RMA_RDMA_THRESH;
+
+	/* need a memory descriptor for all RDMA and reads */
+	if (!mdesc && (rdma || fr_type == GNIX_FAB_RQ_RDMA_READ)) {
+		GNIX_INFO(FI_LOG_EP_DATA,
+			  "RMA of length %d requires memory descriptor\n",
+			  len);
+		return -FI_EINVAL;
+	}
+
+	/* find VC for target */
+	rc = _gnix_ep_get_vc(ep, dest_addr, &vc);
+	if (rc) {
+		GNIX_INFO(FI_LOG_EP_DATA,
+			  "_gnix_ep_get_vc() failed, addr: %lx, rc:\n",
+			  dest_addr, rc);
+		return rc;
 	}
 
 	/* setup fabric request */
 	req = _gnix_fr_alloc(ep);
 	if (!req) {
-		GNIX_INFO(FI_LOG_EP_DATA, "_fr_alloc() failed\n");
+		GNIX_INFO(FI_LOG_EP_DATA, "_gnix_fr_alloc() failed\n");
 		return -FI_ENOSPC;
 	}
 
@@ -184,68 +225,39 @@ ssize_t _gnix_rma(struct gnix_vc *vc, enum gnix_fab_req_type fr_type,
 	req->completer_fn = __gnix_rma_fab_req_complete;
 	req->completer_data = req;
 	req->user_context = context;
+	req->send_fn = _gnix_rma_post_req;
 
-	md = container_of(mdesc, struct gnix_fid_mem_desc, mr_fid);
-	req->loc_addr = loc_addr;
+	if (mdesc) {
+		md = container_of(mdesc, struct gnix_fid_mem_desc, mr_fid);
+	}
+
 	req->rma.loc_md = (void *)md;
 	req->rma.rem_addr = rem_addr;
 	req->rma.rem_mr_key = mkey;
 	req->len = len;
 	req->flags = flags;
 
-	/* try post */
-	rc = __gnix_post_req(req);
-	if (rc) {
-		/* queue request */
-		return rc;
+	if (req->flags & FI_INJECT) {
+		memcpy(req->inject_buf, (void *)loc_addr, len);
+		req->loc_addr = (uint64_t)req->inject_buf;
+	} else {
+		req->loc_addr = loc_addr;
 	}
 
-	return FI_SUCCESS;
-}
-
-ssize_t _gnix_write(struct gnix_vc *vc, uint64_t loc_addr, size_t len,
-		    void *mdesc, uint64_t rem_addr, uint64_t mkey,
-		    void *context, uint64_t flags, uint64_t data)
-{
-	return _gnix_rma(vc, GNIX_FAB_RQ_RDMA_WRITE, loc_addr, len, mdesc,
-			 rem_addr, mkey, context, flags, data);
-}
-
-ssize_t _gnix_write_imm(struct gnix_vc *vc, uint64_t loc_addr, size_t len,
-		        void *mdesc, uint64_t rem_addr, uint64_t mkey,
-		        void *context, uint64_t flags, uint64_t data)
-{
-	return _gnix_rma(vc, GNIX_FAB_RQ_RDMA_WRITE_IMM_DATA, loc_addr, len,
-			 mdesc, rem_addr, mkey, context, flags, data);
-}
-
-ssize_t _gnix_read(struct gnix_vc *vc, uint64_t loc_addr, size_t len,
-		   void *mdesc, uint64_t rem_addr, uint64_t mkey,
-		   void *context, uint64_t flags, uint64_t data)
-{
-	return _gnix_rma(vc, GNIX_FAB_RQ_RDMA_READ, loc_addr, len, mdesc,
-			 rem_addr, mkey, context, flags, data);
-}
-
-#if 0
-gnix_vc *_gnix_ep_vc_lookup(gnix_fid_ep *ep_priv, fi_addr addr)
-{
-	
-}
-
-static ssize_t gnix_ep_rma_write(struct fid_ep *ep, const void *buf,
-				 size_t len, void *desc, fi_addr_t dest_addr,
-				 uint64_t addr, uint64_t key, void *context)
-{
-	gnix_vc *vc;
-
-	/* find VC for target, connect if necessary */
-	vc = _gnix_ep_vc_lookup(ep_priv, dest_addr);
-	if (!vc) {
-		return -FI_EINVAL;
+	/* Inject interfaces always suppress completions.  If
+	 * SELECTIVE_COMPLETION is set, honor any setting.  Otherwise, always
+	 * deliver a completion. */
+	if ((flags & GNIX_SUPPRESS_COMPLETION) ||
+	    (ep->send_selective_completion && !(flags & FI_COMPLETION))) {
+		req->flags &= ~FI_COMPLETION;
+	} else {
+		req->flags |= FI_COMPLETION;
 	}
 
-	return _gnix_write(vc, buf, len, desc, addr, key, context, 0, 0);
+	if (rdma) {
+		req->flags |= GNIX_RMA_RDMA;
+	}
+
+	return _gnix_vc_queue_tx_req(req);
 }
-#endif
 

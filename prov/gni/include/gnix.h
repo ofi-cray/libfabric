@@ -304,9 +304,9 @@ struct gnix_fid_ep {
 	int recv_selective_completion;
 	/* num. active read and write fab_reqs associated with this ep */
 	atomic_t active_fab_reqs;
+	/* note this free list will be initialized for thread safe */
 	struct gnix_s_freelist fr_freelist;
 	atomic_t ref_cnt;
-	fastlock_t lock;
 };
 
 struct gnix_addr_entry {

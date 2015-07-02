@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2015 Cray Inc. All rights reserved.
+ * Copyright (c) 2015 Los Alamos National Security, LLC. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -42,7 +43,7 @@
 
 /*
  * NOTES:
- * - NOT THREAD-SAFE (do they need to be?)
+ * - thread safe if initialized with _nix_sfl_init_ts
  * - Does not shrink
  * - Cannot be used for data structures with alignment requirements
  * - Refill size increases by growth_factor each time growth is needed
@@ -121,6 +122,28 @@ int _gnix_sfl_init(int elem_size, int offset, int init_size,
 	return __gnix_sfl_refill(fl, fill_size);
 }
 
+int _gnix_sfl_init_ts(int elem_size, int offset, int init_size,
+		      int refill_size, int growth_factor,
+		      int max_refill_size, struct gnix_s_freelist *fl)
+{
+	int ret;
+
+	ret = _gnix_sfl_init(elem_size,
+			     offset,
+			     init_size,
+			     refill_size,
+			     growth_factor,
+			     max_refill_size,
+			     fl);
+	if (ret == FI_SUCCESS) {
+		fl->ts = 1;
+		fastlock_init(&fl->lock);
+	}
+
+	return ret;
+
+}
+
 void _gnix_sfl_destroy(struct gnix_s_freelist *fl)
 {
 	assert(fl);
@@ -132,6 +155,9 @@ void _gnix_sfl_destroy(struct gnix_s_freelist *fl)
 	     chunk = slist_remove_head(&fl->chunks)) {
 		free(chunk);
 	}
+
+	if (fl->ts)
+		fastlock_destroy(&fl->lock);
 }
 
 int _gnix_sfe_alloc(struct slist_entry **e, struct gnix_s_freelist *fl)
@@ -139,6 +165,9 @@ int _gnix_sfe_alloc(struct slist_entry **e, struct gnix_s_freelist *fl)
 	int ret = FI_SUCCESS;
 
 	assert(fl);
+
+	if (fl->ts)
+		fastlock_acquire(&fl->lock);
 
 	struct slist_entry *se = slist_remove_head(&fl->freelist);
 
@@ -162,9 +191,9 @@ int _gnix_sfe_alloc(struct slist_entry **e, struct gnix_s_freelist *fl)
 	}
 
 	*e = se;
-	return ret;
-
 err:
+	if (fl->ts)
+		fastlock_release(&fl->lock);
 	return ret;
 }
 
@@ -174,6 +203,10 @@ void _gnix_sfe_free(struct slist_entry *e, struct gnix_s_freelist *fl)
 	assert(fl);
 
 	/* */
+	if (fl->ts)
+		fastlock_acquire(&fl->lock);
 	slist_insert_tail(e, &fl->freelist);
+	if (fl->ts)
+		fastlock_release(&fl->lock);
 }
 

@@ -63,11 +63,11 @@
 static int __fr_freelist_init(struct gnix_fid_ep *ep)
 {
 	assert(ep);
-	return _gnix_sfl_init(sizeof(struct gnix_fab_req),
-			      offsetof(struct gnix_fab_req, slist),
-			      GNIX_FAB_REQ_FL_MIN_SIZE,
-			      GNIX_FAB_REQ_FL_REFILL_SIZE,
-			      0, 0, &ep->fr_freelist);
+	return _gnix_sfl_init_ts(sizeof(struct gnix_fab_req),
+				offsetof(struct gnix_fab_req, slist),
+				GNIX_FAB_REQ_FL_MIN_SIZE,
+				GNIX_FAB_REQ_FL_REFILL_SIZE,
+				0, 0, &ep->fr_freelist);
 }
 
 static void __fr_freelist_destroy(struct gnix_fid_ep *ep)
@@ -1287,7 +1287,6 @@ int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
 	ep_priv->ep_fid.rma = &gnix_ep_rma_ops;
 	ep_priv->ep_fid.tagged = &gnix_ep_tagged_ops;
 	ep_priv->ep_fid.atomic = NULL;
-	fastlock_init(&ep_priv->lock);
 
 	ep_priv->ep_fid.cm = &gnix_cm_ops;
 

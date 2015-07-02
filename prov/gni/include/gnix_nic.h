@@ -124,6 +124,7 @@ struct gnix_nic {
 	gni_cq_handle_t rx_cq_blk;
 	gni_cq_handle_t tx_cq;
 	gni_cq_handle_t tx_cq_blk;
+	fastlock_t tx_desc_lock;
 	struct dlist_entry tx_desc_active_list;
 	struct dlist_entry tx_desc_free_list;
 	struct gnix_tx_descriptor *tx_desc_base;

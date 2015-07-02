@@ -602,6 +602,7 @@ int _gnix_mbox_allocator_create(struct gnix_nic *nic,
 	handle->mpmmap = mpmmap;
 	handle->nic_handle = nic;
 	handle->cq_handle = cq_handle;
+	fastlock_init(&handle->lock);
 
 	ret = __open_huge_page(handle);
 	if (ret) {
@@ -671,6 +672,7 @@ int _gnix_mbox_allocator_destroy(struct gnix_mbox_alloc_handle *alloc_handle)
 			  error);
 	}
 
+	fastlock_destroy(&alloc_handle->lock);
 
 	return FI_SUCCESS;
 }
@@ -690,6 +692,7 @@ int _gnix_mbox_alloc(struct gnix_mbox_alloc_handle *alloc_handle,
 		goto err;
 	}
 
+	fastlock_acquire(&alloc_handle->lock);
 	position = __find_free(alloc_handle, &slab);
 	if (position < 0) {
 		GNIX_DEBUG(FI_LOG_EP_CTRL, "Creating new slab.\n");
@@ -708,6 +711,7 @@ int _gnix_mbox_alloc(struct gnix_mbox_alloc_handle *alloc_handle,
 	if (ret)
 		GNIX_WARN(FI_LOG_EP_CTRL, "Creating mbox failed.\n");
 
+	fastlock_release(&alloc_handle->lock);
 err:
 	return ret;
 }
@@ -724,16 +728,19 @@ int _gnix_mbox_free(struct gnix_mbox *ptr)
 		return -FI_EINVAL;
 	}
 
+	fastlock_acquire(&ptr->slab->allocator->lock);
 	position = ptr->offset / ptr->slab->allocator->mbox_size;
 
 	ret = _gnix_test_and_clear_bit(ptr->slab->used, position);
 	if (ret != 1) {
 		GNIX_WARN(FI_LOG_EP_CTRL,
 			  "Bit already cleared while freeing mbox.\n");
+		fastlock_release(&ptr->slab->allocator->lock);
 		return -FI_EINVAL;
 	}
 
 	free(ptr);
+	fastlock_release(&ptr->slab->allocator->lock);
 
 	return FI_SUCCESS;
 }

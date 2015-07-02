@@ -122,9 +122,11 @@ static int __nic_rx_progress(struct gnix_nic *nic)
 	 * getting the nic lock
 	 */
 
+#if 0
 	status = GNI_CqTestEvent(nic->rx_cq);
 	if (status == GNI_RC_NOT_DONE)
 		return FI_SUCCESS;
+#endif
 
 	fastlock_acquire(&nic->lock);
 try_again:

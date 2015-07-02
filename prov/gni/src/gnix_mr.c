@@ -1,5 +1,7 @@
 /*
  * Copyright (c) 2015 Cray Inc. All rights reserved.
+ * Copyright (c) 2015 Los Alamos National Security, LLC. All rights reserved.
+ *
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -205,7 +207,9 @@ static inline int __mr_cache_entry_destroy(
 {
 	gni_return_t ret;
 
+	fastlock_acquire(&entry->nic->lock);
 	ret = GNI_MemDeregister(entry->nic->gni_nic_hndl, &entry->mem_hndl);
+	fastlock_release(&entry->nic->lock);
 	if (ret == GNI_RC_SUCCESS) {
 		atomic_dec(&entry->domain->ref_cnt);
 		atomic_dec(&entry->nic->ref_cnt);
@@ -725,9 +729,11 @@ static int __mr_cache_register(
 	/* TODO: should we just try the first nic we find? */
 	dlist_for_each(&domain->nic_list, nic, list)
 	{
+		fastlock_acquire(&nic->lock);
 		grc = GNI_MemRegister(nic->gni_nic_hndl, address, length,
 					dst_cq_hndl, flags,
 					vmdh_index, &entry->mem_hndl);
+		fastlock_release(&nic->lock);
 		if (grc == GNI_RC_SUCCESS)
 			break;
 	}
@@ -750,7 +756,9 @@ static int __mr_cache_register(
 		GNIX_INFO(FI_LOG_MR, "failed to insert registration "
 				"into cache, ret=%i", rc);
 
+		fastlock_acquire(&nic->lock);
 		grc = GNI_MemDeregister(nic->gni_nic_hndl, &entry->mem_hndl);
+		fastlock_release(&nic->lock);
 		if (unlikely(grc != GNI_RC_SUCCESS)) {
 			GNIX_INFO(FI_LOG_MR, "failed to deregister memory with "
 					"uGNI, ret=%s", gni_err_str[grc]);

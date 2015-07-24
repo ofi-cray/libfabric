@@ -65,136 +65,120 @@ __desc_lkup_by_id(struct gnix_nic *nic, int desc_id)
 	return tx_desc;
 }
 
-/*
- * function to process GNI CQ RX CQES to progress a gnix_nic
- * -note that the callback functions for the vc's are suppose to
- * include the following call sequence to release the SMSG message
- * and unlock the nic lock:
- *
-	status = GNI_SmsgRelease(vc->ep);
-	fastlock_release(&nic->lock);
- *
- * The idea here is that is possible that the callback function
- * may need to have some kind of post-nic-lock work to do.
- * Want to avoid using recursive locks.
- */
-static inline int __process_smsg(struct gnix_vc *vc)
+static int __nic_rx_overrun(struct gnix_nic *nic)
 {
-	int ret = FI_SUCCESS;
-	int status = GNI_RC_SUCCESS;
-	struct gnix_nic *nic = vc->ep->nic;
-	uint8_t tag = GNI_SMSG_ANY_TAG;
-	void *msg_ptr;
+	int i, max_id, ret;
+	struct gnix_vc *vc;
+	gni_return_t status;
+	gni_cq_entry_t cqe;
 
+	/* clear out the CQ */
+	while ((status = GNI_CqGetEvent(nic->rx_cq, &cqe)) == GNI_RC_SUCCESS);
+	assert(status == GNI_RC_NOT_DONE);
+
+	fastlock_acquire(&nic->vc_id_lock);
+	max_id = nic->vc_id_table_count;
+	fastlock_release(&nic->vc_id_lock);
 	/*
-	 * the nic lock is already held when this
-	 * function is invoked
+	 * TODO: optimization would
+	 * be to keep track of last time
+	 * this happened and where smsg msgs.
+	 * were found.
 	 */
-
-	do {
-		status = GNI_SmsgGetNextWTag(vc->gni_ep,
-					     &msg_ptr,
-					     &tag);
-		if (status == GNI_RC_SUCCESS) {
-			ret = nic->smsg_callbacks[tag](vc,
-						       msg_ptr);
+	for (i = 0; i < max_id; i++) {
+		ret = _gnix_test_bit(&nic->vc_id_bitmap, i);
+		if (ret) {
+			vc = __gnix_nic_elem_by_rem_id(nic, i);
+			ret = _gnix_vc_schedule(vc);
 			assert(ret == FI_SUCCESS);
 		}
-	} while (status == GNI_RC_SUCCESS);
-
-	if (status != GNI_RC_NOT_DONE) {
-		GNIX_WARN(FI_LOG_EP_DATA,
-			  "GNI_SmsgGetNextWTag returned %s\n",
-			  gni_err_str[status]);
-		ret = gnixu_to_fi_errno(status);
 	}
+
+	return FI_SUCCESS;
+}
+
+static int process_rx_cqe(struct gnix_nic *nic, gni_cq_entry_t cqe)
+{
+	int ret = FI_SUCCESS, vc_id = 0;
+	struct gnix_vc *vc;
+
+	vc_id =  GNI_CQ_GET_INST_ID(cqe);
+	vc = __gnix_nic_elem_by_rem_id(nic, vc_id);
+
+#if 1 /* Process RX inline with arrival of an RX CQE. */
+	if (unlikely(vc->conn_state != GNIX_VC_CONNECTED)) {
+		GNIX_INFO(FI_LOG_EP_CTRL,
+			  "Scheduling VC for RX processing (%p)\n",
+			  vc);
+		_gnix_set_bit(&vc->flags, GNIX_VC_FLAG_RX_PENDING);
+		ret = _gnix_vc_schedule(vc);
+		assert(ret == FI_SUCCESS);
+	} else {
+		GNIX_INFO(FI_LOG_EP_CTRL,
+			  "Processing VC RX (%p)\n",
+			  vc);
+		ret = _gnix_vc_dequeue_smsg(vc);
+		if (ret != FI_SUCCESS) {
+			GNIX_WARN(FI_LOG_EP_CTRL,
+					"_gnix_vc_dqueue_smsg returned %d\n",
+					ret);
+		}
+	}
+#else /* Defer RX processing until after the RX CQ is cleared. */
+	_gnix_set_bit(&vc->flags, GNIX_VC_FLAG_RX_PENDING);
+	ret = _gnix_vc_schedule(vc);
+	assert(ret == FI_SUCCESS);
+#endif
 
 	return ret;
 }
 
 static int __nic_rx_progress(struct gnix_nic *nic)
 {
-	int i, ret = FI_SUCCESS;
-	int vc_id = 0;
-	int max_id;
-	gni_return_t  status = GNI_RC_NOT_DONE;
+	int ret = FI_SUCCESS;
+	gni_return_t status = GNI_RC_NOT_DONE;
 	gni_cq_entry_t cqe;
-	struct gnix_vc *vc;
 
-	/*
-	 * first see if there are any CQE's on the
-	 * tx cq. Calling GNI_CqTestEvent does not require
-	 * getting the nic lock
-	 */
-
-#if 0
 	status = GNI_CqTestEvent(nic->rx_cq);
-	if (status == GNI_RC_NOT_DONE)
+	if (likely(status == GNI_RC_NOT_DONE))
 		return FI_SUCCESS;
-#endif
 
 	fastlock_acquire(&nic->lock);
-try_again:
-	status = GNI_CqGetEvent(nic->rx_cq, &cqe);
-	if (status  == GNI_RC_NOT_DONE) {
-		fastlock_release(&nic->lock);
-		return FI_SUCCESS;
-	}
 
-	/*
-	 * no CQ overrun
-	 */
-	if (status == GNI_RC_SUCCESS) {
-
-		vc_id =  GNI_CQ_GET_INST_ID(cqe);
-		vc = __gnix_nic_elem_by_rem_id(nic, vc_id);
-		if (vc->conn_state != GNIX_VC_CONNECTED) {
-			vc->modes |= GNIX_VC_MODE_PENDING_MSGS;
-			ret = _gnix_vc_add_to_wq(vc);
-			goto out;
+	do {
+		status = GNI_CqGetEvent(nic->rx_cq, &cqe);
+		if (unlikely(status == GNI_RC_NOT_DONE)) {
+			ret = FI_SUCCESS;
+			break;
 		}
 
-		ret = __process_smsg(vc);
-		if (ret == FI_SUCCESS)
-			goto try_again;
-
-	} else if (status == GNI_RC_ERROR_RESOURCE) {
-		assert(GNI_CQ_OVERRUN(cqe));
-		/*
-		 * okay, CQ is overrun, have to check
-		 * all vc's - this is considered a kind of
-		 * recovery mode
-		 */
-		fastlock_acquire(&nic->vc_id_lock);
-		max_id = nic->vc_id_table_count;
-		fastlock_release(&nic->vc_id_lock);
-		/*
-		 * TODO: optimization would
-		 * be to keep track of last time
-		 * this happened and where smsg msgs.
-		 * were found.
-		 */
-		for (i = 0; i < max_id; i++) {
-			ret = _gnix_test_bit(&nic->vc_id_bitmap, i);
-			if (ret) {
-				vc = __gnix_nic_elem_by_rem_id(nic, i);
-				ret = __process_smsg(vc);
-				assert(ret == FI_SUCCESS);
+		if (likely(status == GNI_RC_SUCCESS)) {
+			/* Find and schedule the associated VC. */
+			ret = process_rx_cqe(nic, cqe);
+			if (ret != FI_SUCCESS) {
+				GNIX_WARN(FI_LOG_EP_DATA,
+					  "process_rx_cqe() failed: %d\n",
+					  ret);
 			}
+		} else if (status == GNI_RC_ERROR_RESOURCE) {
+			/* The remote CQ was overrun.  Events related to any VC
+			 * could have been missed.  Schedule each VC to be sure
+			 * all messages are processed. */
+			assert(GNI_CQ_OVERRUN(cqe));
+			__nic_rx_overrun(nic);
+		} else {
+			GNIX_WARN(FI_LOG_EP_DATA,
+				  "GNI_CqGetEvent returned %s\n",
+				  gni_err_str[status]);
+			ret = gnixu_to_fi_errno(status);
+			break;
 		}
-		goto try_again;
-	} else {
-		GNIX_WARN(FI_LOG_EP_DATA,
-			"GNI_SmsgGetNextWTag returned %s\n",
-			gni_err_str[status]);
-		ret = gnixu_to_fi_errno(status);
-	}
+	} while (1);
 
-out:
 	fastlock_release(&nic->lock);
+
 	return ret;
 }
-
 
 /*
  * function to process GNI CQ TX CQES to progress a gnix_nic
@@ -209,12 +193,6 @@ static int __nic_tx_progress(struct gnix_nic *nic)
 	gni_cq_entry_t cqe;
 	struct gnix_tx_descriptor *gnix_tdesc = NULL;
 	unsigned int recov;
-
-	/*
-	 * first see if there are any CQE's on the
-	 * tx cq. Calling GNI_CqTestEvent does not require
-	 * getting the nic lock
-	 */
 
 try_again:
 	fastlock_acquire(&nic->lock);
@@ -317,63 +295,40 @@ err:
 
 }
 
+int __nic_vc_progress(struct gnix_nic *nic)
+{
+	struct gnix_vc *vc;
+	int ret;
+
+	while ((vc = _gnix_nic_next_pending_vc(nic))) {
+		ret = _gnix_vc_progress(vc);
+		if (ret != FI_SUCCESS) {
+			GNIX_INFO(FI_LOG_EP_CTRL,
+				  "Rescheduling VC (%p)\n", vc);
+			ret = _gnix_vc_schedule(vc);
+			assert(ret == FI_SUCCESS);
+		}
+	}
+
+	return FI_SUCCESS;
+}
+
 int _gnix_nic_progress(struct gnix_nic *nic)
 {
 	int ret = FI_SUCCESS;
-	int complete;
-	struct gnix_work_req *p = NULL;
 
 	ret =  __nic_tx_progress(nic);
-	if (ret != FI_SUCCESS)
+	if (unlikely(ret != FI_SUCCESS))
 		return ret;
 
 	ret = __nic_rx_progress(nic);
-	if (ret != FI_SUCCESS)
+	if (unlikely(ret != FI_SUCCESS))
 		return ret;
 
-	/*
-	 * see what's going in the work queue
-	 */
-
-check_again:
-	if (list_empty(&nic->nic_wq))
+	ret = __nic_vc_progress(nic);
+	if (unlikely(ret != FI_SUCCESS))
 		return ret;
 
-	fastlock_acquire(&nic->wq_lock);
-	p = list_top(&nic->nic_wq, struct gnix_work_req, list);
-	if (p == NULL) {
-		fastlock_release(&nic->wq_lock);
-		return ret;
-	}
-
-	gnix_list_del_init(&p->list);
-	fastlock_release(&nic->wq_lock);
-
-	assert(p->progress_fn);
-
-	ret = p->progress_fn(p->data, &complete);
-	if (ret != FI_SUCCESS) {
-		GNIX_WARN(FI_LOG_EP_DATA,
-			  "progress_func returned with erro - %d\n",
-			  ret );
-		goto err;
-	}
-
-	if (complete == 1) {
-		if (p->completer_fn) {
-			ret = p->completer_fn(p->completer_data);
-			free(p);
-			if (ret != FI_SUCCESS)
-				goto err;
-		}
-		goto check_again;  /* we're getting stuff done, try again */
-	} else {
-		fastlock_acquire(&nic->wq_lock);
-		list_add_tail(&nic->nic_wq, &p->list);
-		fastlock_release(&nic->wq_lock);
-	}
-
-err:
 	return ret;
 }
 
@@ -814,8 +769,8 @@ int gnix_nic_alloc(struct gnix_fid_domain *domain,
 		if (ret != FI_SUCCESS)
 			goto err1;
 
-		fastlock_init(&nic->wq_lock);
-		list_head_init(&nic->nic_wq);
+		fastlock_init(&nic->pending_vc_lock);
+		slist_init(&nic->pending_vcs);
 
 		atomic_initialize(&nic->ref_cnt, 1);
 		atomic_initialize(&nic->outstanding_fab_reqs_nic, 0);

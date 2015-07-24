@@ -108,6 +108,8 @@ int _gnix_ep_eager_msg_w_data_match(struct gnix_fid_ep *ep, void *msg,
 
 		if (slist_empty(&ep->pending_recv_comp_queue)) {
 
+			GNIX_INFO(FI_LOG_EP_DATA, "Matched request: %p\n", req);
+
 			/*
 			 * TODO: eventually need to deal with
 			 * FI_SELECTIVE_COMPLETION
@@ -138,7 +140,6 @@ int _gnix_ep_eager_msg_w_data_match(struct gnix_fid_ep *ep, void *msg,
 		} else
 			gnix_slist_insert_tail(&req->slist,
 					       &ep->pending_recv_comp_queue);
-
 	} else {
 
 		req = _gnix_fr_alloc(ep);
@@ -164,6 +165,8 @@ int _gnix_ep_eager_msg_w_data_match(struct gnix_fid_ep *ep, void *msg,
 
 		gnix_slist_insert_tail(&req->slist,
 					&ep->unexp_recv_queue);
+
+		GNIX_INFO(FI_LOG_EP_DATA, "Unmatched request: %p\n", req);
 	}
 
 err:
@@ -171,50 +174,3 @@ err:
 	return ret;
 }
 
-/*
- *  There were messages in the mailbox associated with
- *  this vc before it was fully connected.  Need to drain them
- */
-
-int _gnix_ep_vc_dequeue_smsg(struct gnix_vc *vc)
-{
-	int ret = FI_SUCCESS;
-	struct gnix_nic *nic;
-	gni_return_t status;
-	void *msg_ptr;
-	uint8_t tag = GNI_SMSG_ANY_TAG;
-
-	GNIX_TRACE(FI_LOG_EP_DATA, "\n");
-
-	assert(vc->gni_ep != NULL);
-	assert(vc->conn_state == GNIX_VC_CONNECTED);
-
-	nic = vc->ep->nic;
-	assert(nic != NULL);
-
-	fastlock_acquire(&nic->lock);
-	do {
-		status = GNI_SmsgGetNextWTag(vc->gni_ep,
-					     &msg_ptr,
-					     &tag);
-
-		if (status == GNI_RC_SUCCESS) {
-			ret = nic->smsg_callbacks[tag](vc, msg_ptr);
-			assert(ret == FI_SUCCESS);
-		} else if (status == GNI_RC_NOT_DONE) {
-			ret = FI_SUCCESS;
-			goto out;
-		} else {
-			GNIX_WARN(FI_LOG_EP_DATA,
-				"GNI_SmsgGetNextWTag returned %s\n",
-				gni_err_str[status]);
-			ret = gnixu_to_fi_errno(status);
-			goto err;
-		}
-	} while (status != GNI_RC_NOT_DONE);
-out:
-err:
-	fastlock_release(&nic->lock);
-	vc->modes &= ~GNIX_VC_MODE_PENDING_MSGS;
-	return ret;
-}

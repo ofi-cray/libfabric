@@ -131,8 +131,8 @@ struct gnix_nic {
 	struct dlist_entry tx_desc_free_list;
 	struct gnix_tx_descriptor *tx_desc_base;
 	atomic_t outstanding_fab_reqs_nic;
-	fastlock_t wq_lock;
-	struct list_head nic_wq;
+	fastlock_t pending_vc_lock;
+	struct slist pending_vcs;
 	uint8_t ptag;
 	uint32_t cookie;
 	uint32_t device_id;

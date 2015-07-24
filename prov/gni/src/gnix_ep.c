@@ -238,10 +238,11 @@ static int __comp_eager_msg_w_data(void *data)
 			   ret);
 	}
 
-	/* We could have requests waiting for TXDs or FI_FENCE operations.  Try
-	 * to push the queue now. */
 	atomic_dec(&req->vc->outstanding_tx_reqs);
-	_gnix_vc_push_tx_reqs(req->vc);
+
+	/* We could have requests waiting for TXDs or FI_FENCE operations.
+	 * Schedule this VC to push any such TXs. */
+	_gnix_vc_schedule_tx(req->vc);
 
 	_gnix_fr_free(ep, req);
 

@@ -256,7 +256,6 @@ static int __gnix_cq_progress(struct gnix_fid_cq *cq)
 	rwlock_rdlock(&cq->nic_lock);
 
 	dlist_for_each_safe(&cq->poll_nics, pnic, tmp, list) {
-		GNIX_INFO(FI_LOG_CQ, "progressing nic %p\n", pnic->nic);
 		rc = _gnix_nic_progress(pnic->nic);
 		if (rc) {
 			GNIX_WARN(FI_LOG_CQ,

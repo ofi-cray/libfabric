@@ -80,19 +80,6 @@ extern smsg_completer_fn_t gnix_ep_smsg_completers[];
 int _gnix_ep_eager_msg_w_data_match(struct gnix_fid_ep *ep, void *msg,
 				    struct gnix_address addr, size_t len,
 				    uint64_t imm, uint64_t sflags);
-
-/**
- * @brief  dequeue smsg messages that arrived before vc fully
- *         initialized at receiver
- *
- * @param[in] vc        pointer to a previously allocated vc
- * @return              FI_SUCCESS on success meaning that no errors
- *                      were encountered dequeing SMSG messages, -FI_EINVAL
- *                      if an invalid argument is supplied,
- *                      -FI_EAGAIN if the SMSG channel is in an
- *                      invalid state.
- */
-int _gnix_ep_vc_dequeue_smsg(struct gnix_vc *vc);
 /*
  * typedefs for function vectors used to steer send/receive/rma/amo requests,
  * i.e. fi_send, fi_recv, etc. to ep type specific methods

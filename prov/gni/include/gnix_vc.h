@@ -43,6 +43,7 @@ extern "C" {
 #endif /* HAVE_CONFIG_H */
 
 #include "gnix.h"
+#include "gnix_bitmap.h"
 
 /*
  * mode bits
@@ -51,6 +52,10 @@ extern "C" {
 #define GNIX_VC_MODE_IN_HT		(1U << 1)
 #define GNIX_VC_MODE_DG_POSTED		(1U << 2)
 #define GNIX_VC_MODE_PENDING_MSGS	(1U << 3)
+
+/* VC flags */
+#define GNIX_VC_FLAG_SCHEDULED		0
+#define GNIX_VC_FLAG_RX_PENDING		1
 
 /*
  * defines for connection state for gnix VC
@@ -106,6 +111,8 @@ struct gnix_vc {
 	enum gnix_vc_conn_state conn_state;
 	int vc_id;
 	int modes;
+	struct slist_entry pending_list;
+	gnix_bitmap_t flags; /* We're missing regular bit ops */
 };
 
 /*
@@ -200,7 +207,11 @@ static inline enum gnix_vc_conn_state _gnix_vc_state(struct gnix_vc *vc)
 }
 
 
-int _gnix_vc_push_tx_reqs(struct gnix_vc *vc);
+int _gnix_vc_schedule(struct gnix_vc *vc);
+int _gnix_vc_schedule_tx(struct gnix_vc *vc);
+struct gnix_vc *_gnix_nic_next_pending_vc(struct gnix_nic *nic);
+int _gnix_vc_dequeue_smsg(struct gnix_vc *vc);
+int _gnix_vc_progress(struct gnix_vc *vc);
 int _gnix_vc_queue_tx_req(struct gnix_fab_req *req);
 
 /**

@@ -239,8 +239,6 @@ int check_data(char *buf1, char *buf2, int len)
 	return 1;
 }
 
-;
-
 void xfer_for_each_size(void (*xfer)(int len), int slen, int elen)
 {
 	int i;
@@ -451,7 +449,7 @@ void do_inject_write(int len)
 
 	init_data(source, len, 0x23);
 	init_data(target, len, 0);
-	sz = fi_inject_write(ep[0], source, INJECT_SIZE,
+	sz = fi_inject_write(ep[0], source, len,
 			     gni_addr[1], (uint64_t)target, mr_key);
 	cr_assert_eq(sz, 0);
 
@@ -470,7 +468,7 @@ void do_inject_write(int len)
 
 Test(rdm_rma, inject_write)
 {
-	xfer_for_each_size(do_inject_write, 8, BUF_SZ);
+	xfer_for_each_size(do_inject_write, 8, INJECT_SIZE);
 }
 
 void do_writedata(int len)

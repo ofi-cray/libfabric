@@ -132,13 +132,10 @@ int _gnix_rma_post_req(void *data)
 	int rc;
 	int rdma = !!(fab_req->flags & GNIX_RMA_RDMA);
 
-	fastlock_acquire(&nic->lock);
-
 	rc = _gnix_nic_tx_alloc(nic, &txd);
 	if (rc) {
 		GNIX_INFO(FI_LOG_EP_DATA, "_gnix_nic_tx_alloc() failed: %d\n",
 			 rc);
-		fastlock_release(&nic->lock);
 		return -FI_EAGAIN;
 	}
 
@@ -147,7 +144,7 @@ int _gnix_rma_post_req(void *data)
 
 	_gnix_convert_key_to_mhdl((gnix_mr_key_t *)&fab_req->rma.rem_mr_key,
 				  &mdh);
-	loc_md = (struct gnix_fid_mem_desc *)fab_req->rma.loc_md;
+	loc_md = (struct gnix_fid_mem_desc *)fab_req->loc_md;
 
 	//txd->desc.gni_desc.post_id = (uint64_t)fab_req; /* unused */
 	txd->desc.gni_desc.type = __gnix_fr_post_type(fab_req->type, rdma);
@@ -175,18 +172,21 @@ int _gnix_rma_post_req(void *data)
 			  fab_req->rma.rem_mr_key);
 	}
 
+	fastlock_acquire(&nic->lock);
+
 	if (rdma) {
 		status = GNI_PostRdma(fab_req->vc->gni_ep, &txd->desc.gni_desc);
 	} else {
 		status = GNI_PostFma(fab_req->vc->gni_ep, &txd->desc.gni_desc);
 	}
 
+	fastlock_release(&nic->lock);
+
 	if (status != GNI_RC_SUCCESS) {
+		_gnix_nic_tx_free(nic, txd);
 		GNIX_INFO(FI_LOG_EP_DATA, "GNI_Post*() failed: %s\n",
 			  gni_err_str[status]);
 	}
-
-	fastlock_release(&nic->lock);
 
 	return gnixu_to_fi_errno(status);
 }
@@ -250,8 +250,8 @@ ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
 	if (mdesc) {
 		md = container_of(mdesc, struct gnix_fid_mem_desc, mr_fid);
 	}
+	req->loc_md = (void *)md;
 
-	req->rma.loc_md = (void *)md;
 	req->rma.rem_addr = rem_addr;
 	req->rma.rem_mr_key = mkey;
 	req->len = len;

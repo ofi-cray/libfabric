@@ -36,7 +36,8 @@ _gni_files = \
 	prov/gni/src/gnix_bitmap.c \
 	prov/gni/src/gnix_hashtable.c \
 	prov/gni/src/gnix_mbox_allocator.c \
-	prov/gni/src/gnix_rma.c
+	prov/gni/src/gnix_rma.c \
+	prov/gni/src/gnix_msg.c
 
 if HAVE_CRITERION
 bin_PROGRAMS += prov/gni/test/gnitest

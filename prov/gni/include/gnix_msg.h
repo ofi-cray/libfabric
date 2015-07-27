@@ -31,13 +31,12 @@
  * SOFTWARE.
  */
 
-#ifndef _GNIX_RMA_H_
-#define _GNIX_RMA_H_
+#ifndef _GNIX_MSG_H_
+#define _GNIX_MSG_H_
 
-ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
-		  uint64_t loc_addr, size_t len, void *mdesc,
-		  uint64_t dest_addr, uint64_t rem_addr, uint64_t mkey,
-		  void *context, uint64_t flags, uint64_t data);
+ssize_t _gnix_send(struct gnix_fid_ep *ep, uint64_t loc_addr, size_t len,
+		   void *mdesc, uint64_t dest_addr, void *context,
+		   uint64_t flags, uint64_t data);
 
-#endif /* _GNIX_RMA_H_ */
+#endif /* _GNIX_MSG_H_ */
 

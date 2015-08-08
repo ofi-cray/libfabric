@@ -231,4 +231,5 @@ int _gnix_vc_queue_tx_req(struct gnix_fab_req *req);
 int _gnix_ep_get_vc(struct gnix_fid_ep *ep, fi_addr_t dest_addr,
 		    struct gnix_vc **vc_ptr);
 
+int _gnix_table_addr_to_map_addr(struct gnix_fid_av *int_av, fi_addr_t fi_addr, fi_addr_t *real_addr);
 #endif /* _GNIX_VC_H_ */

@@ -324,6 +324,7 @@ ssize_t _gnix_recv(struct gnix_fid_ep *ep, uint64_t buf, size_t len, void *desc,
 	struct gnix_fab_req *req = NULL;
 	ssize_t cq_len;
 	struct gnix_address *addr_ptr = NULL;
+	fi_addr_t real_addr;
 
 	/* TODO make generic address lookup function */
 	/* TODO ignore src_addr unless FI_DIRECT_RECV */
@@ -331,11 +332,15 @@ ssize_t _gnix_recv(struct gnix_fid_ep *ep, uint64_t buf, size_t len, void *desc,
 		av = ep->av;
 		assert(av != NULL);
 		if (av->type == FI_AV_TABLE) {
-			/*
-			 * TODO: look up gni address -
-			 *        just return no support for now
-			 */
-			return -FI_ENOSYS;
+			ret = _gnix_table_addr_to_map_addr(av, src_addr, &real_addr);
+			if (ret != FI_SUCCESS) {
+				GNIX_WARN(FI_LOG_AV,
+					"_gnix_table_addr_to_map_addr"
+					" returned %d\n",
+					ret);
+				return ret;
+				}
+			addr_ptr = (struct gnix_address*)&real_addr;
 		} else
 			addr_ptr = (struct gnix_address *)&src_addr;
 	} else {

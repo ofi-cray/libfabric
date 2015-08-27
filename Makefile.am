@@ -66,7 +66,7 @@ endif
 
 src_libfabric_la_CPPFLAGS = $(AM_CPPFLAGS)
 src_libfabric_la_LDFLAGS =
-src_libfabric_la_LIBADD =
+src_libfabric_la_LIBADD = -lpthread -ldl
 src_libfabric_la_DEPENDENCIES = $(srcdir)/libfabric.map
 
 if HAVE_SOCKETS

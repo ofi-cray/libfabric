@@ -258,8 +258,10 @@ int gnix_resolve_name(IN const char *node, IN const char *service,
 	memset(resolved_addr, 0, sizeof(struct gnix_ep_name));
 
 	resolved_addr->gnix_addr.device_addr = pe;
-	/* TODO: have to write a nameserver to get this info */
-	resolved_addr->gnix_addr.cdm_id = 0;
+	if (service != NULL) {
+		resolved_addr->gnix_addr.cdm_id = atol(service);
+	} else
+		resolved_addr->gnix_addr.cdm_id = 0;
 	/* TODO: likely depend on service? */
 	resolved_addr->name_type = 0;
 sock_cleanup:

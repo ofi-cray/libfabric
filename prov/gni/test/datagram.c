@@ -39,6 +39,8 @@
 #include <time.h>
 #include <string.h>
 #include <pthread.h>
+#include <unistd.h>
+#include <limits.h>
 
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
@@ -61,10 +63,12 @@ static struct fid_ep *ep;
 static struct fi_info *hints;
 static struct fi_info *fi;
 static struct gnix_fid_ep *ep_priv;
+const char  my_cdm_id[] = "0xdeadbeef";
 
 void dg_setup(void)
 {
 	int ret = 0;
+	char my_hostname[HOST_NAME_MAX];
 
 	hints = fi_allocinfo();
 	cr_assert(hints, "fi_allocinfo");
@@ -74,7 +78,11 @@ void dg_setup(void)
 
 	hints->fabric_attr->name = strdup("gni");
 
-	ret = fi_getinfo(FI_VERSION(1, 0), NULL, 0, 0, hints, &fi);
+	ret = gethostname(my_hostname, sizeof(my_hostname));
+	cr_assert(!ret, "gethostname");
+
+	ret = fi_getinfo(FI_VERSION(1, 0), my_hostname, my_cdm_id, FI_SOURCE,
+			 hints, &fi);
 	cr_assert(!ret, "fi_getinfo");
 
 	ret = fi_fabric(fi->fabric_attr, &fab, NULL);
@@ -135,6 +143,18 @@ void dg_teardown(void)
  ******************************************************************************/
 
 TestSuite(dg_allocation, .init = dg_setup, .fini = dg_teardown);
+
+Test(dg_allocation, dgram_verify_cdm_id)
+{
+	uint32_t correct = atol(my_cdm_id);
+	struct gnix_cm_nic *cm_nic;
+
+	ep_priv = container_of(ep, struct gnix_fid_ep, ep_fid);
+	cm_nic = ep_priv->cm_nic;
+	cr_assert((cm_nic != NULL), "cm_nic NULL");
+	cr_assert((cm_nic->cdm_id == correct), "cm_nic incorrect cdm_id");
+}
+
 
 Test(dg_allocation, dgram_alloc_wc)
 {

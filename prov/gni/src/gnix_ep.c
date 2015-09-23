@@ -930,9 +930,11 @@ int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
 {
 	int ret = FI_SUCCESS;
 	int tsret = FI_SUCCESS;
+	uint32_t cdm_id = -1U;
 	struct gnix_fid_domain *domain_priv;
 	struct gnix_fid_ep *ep_priv;
 	gnix_hashtable_attr_t gnix_ht_attr;
+	struct gnix_ep_name *ep_name = NULL;
 	struct gnix_tag_storage_attr untagged_attr = {
 			.type = GNIX_TAG_LIST,
 			.use_src_addr_matching = 1,
@@ -1017,7 +1019,18 @@ int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
 	 * TODO, initialize vc hash table
 	 */
 	if (ep_priv->type == FI_EP_RDM) {
+
+		/*
+		 * application may have specified the cdm_id for the
+		 * cm_nic using non NULL service argument to fi_getinfo
+		 */
+		if (info->src_addr != NULL) {
+			ep_name = (struct gnix_ep_name *)info->src_addr;
+			cdm_id = ep_name->gnix_addr.cdm_id;
+		}
+
 		ret = _gnix_cm_nic_alloc(domain_priv,
+					 cdm_id,
 					 &ep_priv->cm_nic);
 		if (ret != FI_SUCCESS)
 			goto err;

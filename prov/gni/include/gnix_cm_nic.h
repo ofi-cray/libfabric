@@ -84,6 +84,8 @@ int _gnix_cm_nic_free(struct gnix_cm_nic *cm_nic);
  * @brief allocates a cm nic structure
  *
  * @param[in]  domain   pointer to a previously allocated gnix_fid_domain struct
+ * @param[in]  cdm_id   cdm id to use when creating cm nic's GNI CDM.  If
+ *                      set to -1, a cdm_id will be generated for the cm nic.
  * @param[out] cm_nic   pointer to address where address of the allocated
  *                      cm nic structure should be returned
  * @return              FI_SUCCESS on success, -EINVAL on invalid argument,
@@ -91,7 +93,8 @@ int _gnix_cm_nic_free(struct gnix_cm_nic *cm_nic);
  *                      the cm nic structure
  */
 int _gnix_cm_nic_alloc(struct gnix_fid_domain *domain,
-			struct gnix_cm_nic **cm_nic);
+		       uint32_t cdm_id,
+		       struct gnix_cm_nic **cm_nic);
 
 /**
  * @brief poke the cm nic's progress engine

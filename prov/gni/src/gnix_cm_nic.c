@@ -165,7 +165,8 @@ int _gnix_cm_nic_free(struct gnix_cm_nic *cm_nic)
 }
 
 int _gnix_cm_nic_alloc(struct gnix_fid_domain *domain,
-			struct gnix_cm_nic **cm_nic_ptr)
+		       uint32_t cdm_id_arg,
+		       struct gnix_cm_nic **cm_nic_ptr)
 {
 	int ret = FI_SUCCESS;
 	struct gnix_cm_nic *cm_nic = NULL;
@@ -182,9 +183,12 @@ int _gnix_cm_nic_alloc(struct gnix_fid_domain *domain,
 		goto err;
 	}
 
-	ret = _gnix_get_new_cdm_id(domain, &cdm_id);
-	if (ret != FI_SUCCESS)
-		goto err;
+	if (cdm_id_arg == -1U) {
+		ret = _gnix_get_new_cdm_id(domain, &cdm_id);
+		if (ret != FI_SUCCESS)
+			goto err;
+	} else
+		cdm_id = cdm_id_arg;
 
 	GNIX_INFO(FI_LOG_EP_CTRL, "creating cm_nic for %u/0x%x/%u\n",
 		      domain->ptag, domain->cookie, cdm_id);

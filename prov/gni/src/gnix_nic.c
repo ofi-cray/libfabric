@@ -89,8 +89,15 @@ static int __nic_rx_overrun(struct gnix_nic *nic)
 		ret = _gnix_test_bit(&nic->vc_id_bitmap, i);
 		if (ret) {
 			vc = __gnix_nic_elem_by_rem_id(nic, i);
-			ret = _gnix_vc_schedule(vc);
-			assert(ret == FI_SUCCESS);
+			if (unlikely(vc->conn_state != GNIX_VC_CONNECTED))
+				_gnix_set_bit(&vc->flags,
+					      GNIX_VC_FLAG_RX_PENDING);
+			ret = _gnix_vc_dequeue_smsg(vc);
+			if (ret != FI_SUCCESS) {
+				GNIX_WARN(FI_LOG_EP_DATA,
+					"_gnix_vc_dqueue_smsg returned %d\n",
+					ret);
+			}
 		}
 	}
 
@@ -107,19 +114,19 @@ static int process_rx_cqe(struct gnix_nic *nic, gni_cq_entry_t cqe)
 
 #if 1 /* Process RX inline with arrival of an RX CQE. */
 	if (unlikely(vc->conn_state != GNIX_VC_CONNECTED)) {
-		GNIX_INFO(FI_LOG_EP_CTRL,
+		GNIX_INFO(FI_LOG_EP_DATA,
 			  "Scheduling VC for RX processing (%p)\n",
 			  vc);
 		_gnix_set_bit(&vc->flags, GNIX_VC_FLAG_RX_PENDING);
 		ret = _gnix_vc_schedule(vc);
 		assert(ret == FI_SUCCESS);
 	} else {
-		GNIX_INFO(FI_LOG_EP_CTRL,
+		GNIX_INFO(FI_LOG_EP_DATA,
 			  "Processing VC RX (%p)\n",
 			  vc);
 		ret = _gnix_vc_dequeue_smsg(vc);
 		if (ret != FI_SUCCESS) {
-			GNIX_WARN(FI_LOG_EP_CTRL,
+			GNIX_WARN(FI_LOG_EP_DATA,
 					"_gnix_vc_dqueue_smsg returned %d\n",
 					ret);
 		}
@@ -145,6 +152,7 @@ static int __nic_rx_progress(struct gnix_nic *nic)
 
 	fastlock_acquire(&nic->lock);
 
+#if 0
 	do {
 		status = GNI_CqGetEvent(nic->rx_cq, &cqe);
 		if (unlikely(status == GNI_RC_NOT_DONE)) {
@@ -174,6 +182,8 @@ static int __nic_rx_progress(struct gnix_nic *nic)
 			break;
 		}
 	} while (1);
+#endif
+	__nic_rx_overrun(nic);
 
 	fastlock_release(&nic->lock);
 
@@ -300,7 +310,7 @@ int __nic_vc_progress(struct gnix_nic *nic)
 	while ((vc = _gnix_nic_next_pending_vc(nic))) {
 		ret = _gnix_vc_progress(vc);
 		if (ret != FI_SUCCESS) {
-			GNIX_INFO(FI_LOG_EP_CTRL,
+			GNIX_INFO(FI_LOG_EP_DATA,
 				  "Rescheduling VC (%p)\n", vc);
 			ret = _gnix_vc_schedule(vc);
 			assert(ret == FI_SUCCESS);
@@ -353,7 +363,7 @@ int _gnix_nic_get_rem_id(struct gnix_nic *nic, int *remote_id, void *entry)
 	int ret = FI_SUCCESS;
 	void **table_base;
 
-	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
+	GNIX_TRACE(FI_LOG_EP_DATA, "\n");
 
 	/*
 	 * TODO:  really need to search bitmap for clear

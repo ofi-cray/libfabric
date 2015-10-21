@@ -31,6 +31,8 @@
  * SOFTWARE.
  */
 
+#include <stdlib.h>
+
 #include "gnix_queue.h"
 
 #include <criterion/criterion.h>

@@ -33,10 +33,9 @@
 #include "rdma/fabric.h"
 #include "rdma/fi_tagged.h"
 
-#include "gnix_tags.h"
-
 #include "gnix.h"
 #include "gnix_util.h"
+#include "gnix_tags.h"
 
 struct gnix_tag_storage_ops list_ops;
 struct gnix_tag_storage_ops hlist_ops;

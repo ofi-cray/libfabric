@@ -31,8 +31,8 @@
  * SOFTWARE.
  */
 
-#include "gnix_eq.h"
 #include "gnix.h"
+#include "gnix_eq.h"
 
 #include <criterion/criterion.h>
 

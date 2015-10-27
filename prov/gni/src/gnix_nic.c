@@ -272,7 +272,7 @@ static int __nic_get_completed_txd(struct gnix_nic *nic,
 		status = GNI_GetCompleted(nic->tx_cq, cqe, &gni_desc);
 
 		assert(status == GNI_RC_SUCCESS ||
-		       status == GNI_RC_TRANSACTION_FAILURE);
+		       status == GNI_RC_TRANSACTION_ERROR);
 
 		txd_p = container_of(gni_desc,
 				   struct gnix_tx_descriptor,

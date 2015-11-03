@@ -87,6 +87,9 @@ RbtIterator rbtEnd(RbtHandle h);
 void rbtKeyValue(RbtHandle h, RbtIterator i, void **key, void **value);
 // returns key/value pair associated with iterator
 
+void rbtValueReplace(RbtHandle h, RbtIterator it, void *val);
+// replaces user value associated with iterator
+
 RbtIterator rbtFind(RbtHandle h, void *key);
 // returns iterator associated with key
 

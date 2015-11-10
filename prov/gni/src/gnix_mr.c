@@ -84,8 +84,8 @@ typedef struct gnix_mr_cache_entry {
 	atomic_t ref_cnt;
 	struct dlist_entry lru_entry;
 	struct dlist_entry tree_entry;
-	struct dlist_entry global_entry;
-	struct dlist_entry overlap_entry;
+	struct dlist_entry siblings;
+	struct dlist_entry children;
 } gnix_mr_cache_entry_t;
 
 struct gnix_mr_rbt_entry {
@@ -191,6 +191,29 @@ static inline int __mr_exact_match(struct dlist_entry *entry,
 	gnix_mr_cache_entry_t *y = (gnix_mr_cache_entry_t *) match;
 
 	return __match_exact_key(&x->key, &y->key);
+}
+
+static inline struct gnix_mr_rbt_entry *__allocate_rbt_entry(
+		gnix_mr_cache_t *cache)
+{
+	int rc;
+	struct slist_entry *entry = NULL;
+
+	rc = _gnix_sfe_alloc(&entry, &cache->rbtlist_free);
+	if (rc != FI_SUCCESS) {
+		return NULL;
+	}
+
+	return container_of(entry, struct gnix_mr_rbt_entry, free_list_entry);
+}
+
+static inline int __can_subsume(
+		gnix_mr_cache_key_t *to_insert,
+		gnix_mr_cache_key_t *to_compare)
+{
+	return (to_insert->address <= to_compare->address) &&
+			((to_insert->address + to_insert->length) >=
+					(to_compare->address + to_compare->length));
 }
 
 /**
@@ -411,6 +434,135 @@ static inline int __mr_cache_entry_put(
 
 	return grc;
 }
+
+static inline int __insert_inuse_entry_sp(
+		gnix_mr_cache_t *cache,
+		gnix_mr_cache_entry_t *to_insert)
+{
+	struct gnix_mr_rbt_entry *rbt_entry;
+	RbtStatus rc;
+	int ret;
+
+	rbt_entry = __allocate_rbt_entry(cache);
+	if(!rbt_entry)
+		return -FI_ENOMEM;
+
+	dlist_insert_head(&to_insert->tree_entry, &rbt_entry->list);
+
+	rc = rbtInsert(cache->inuse, &to_insert->key,
+			rbt_entry);
+	if (rc != RBT_STATUS_OK) {
+		GNIX_WARN(FI_LOG_MR, "failed to insert entry "
+				"into inuse cache, rc=%d", rc);
+
+		__mr_cache_entry_destroy(to_insert);
+
+		_gnix_sfe_free(&rbt_entry->free_list_entry,
+				&cache->rbtlist_free);
+		ret = -FI_ENOSPC;
+	} else {
+		atomic_inc(&cache->inuse_elements);
+		ret = FI_SUCCESS;
+	}
+
+	return ret;
+}
+
+static inline void __mr_cache_remove_stale_entry_no_tree(
+		gnix_mr_cache_t *cache,
+		gnix_mr_cache_entry_t *to_remove)
+{
+	dlist_remove(&to_remove->siblings);
+	dlist_remove(&to_remove->lru_entry);
+
+	atomic_dec(&cache->stale_elements);
+}
+
+static inline int __mr_cache_remove_stale_entry(
+		gnix_mr_cache_t *cache,
+		gnix_mr_cache_entry_t *to_remove)
+{
+	RbtIterator iter;
+	RbtStatus rc;
+
+	iter = rbtFind(cache->stale, &to_remove->key);
+	assert(iter);
+
+	rc = rbtErase(cache->stale, iter);
+	assert(rc == RBT_STATUS_OK);
+
+	__mr_cache_remove_stale_entry_no_tree(cache, to_remove);
+
+	return FI_SUCCESS;
+}
+
+static inline int __mr_cache_inuse_slowpath_insert_entry(
+		gnix_mr_cache_t *cache,
+		gnix_mr_cache_entry_t *entry)
+{
+
+
+	return FI_SUCCESS;
+}
+
+static inline int __mr_cache_inuse_slowpath_remove_entry(
+		gnix_mr_cache_t *cache,
+		gnix_mr_cache_entry_t *entry)
+{
+
+
+	return FI_SUCCESS;
+}
+
+static inline int __mr_cache_stale_slowpath_insert_entry(
+		gnix_mr_cache_t *cache,
+		gnix_mr_cache_entry_t *entry)
+{
+	gnix_mr_cache_entry_t *current, *next;
+	struct dlist_entry *to_insert;
+	uint64_t end_addr = entry->key.address + entry->key.length;
+
+
+	dlist_for_each_safe(&cache->stale_sp_head, current, next, siblings) {
+		if (__can_subsume(&entry->key, &current->key)) {
+			/* if the entry can be subsumed, lets remove it from the LRU
+			 * and add this new entry. It is likely that more entries may
+			 * be matched to the new entry than the old entry
+			 */
+			__mr_cache_remove_stale_entry(cache, current);
+			__mr_cache_entry_destroy(current);
+			continue;
+		}
+
+		if (!to_insert && entry->key.address < current->key.address)
+			to_insert = &current->siblings;
+
+		if (current->key.address > end_addr)
+			break;
+	}
+
+	if (to_insert)
+		dlist_insert_before(&entry->siblings, to_insert);
+	else
+		dlist_insert_tail(&entry->siblings, &cache->stale_sp_head);
+
+
+	return FI_SUCCESS;
+}
+
+static inline int __mr_cache_stale_slowpath_remove_entry(
+		gnix_mr_cache_t *cache,
+		gnix_mr_cache_entry_t *entry)
+{
+	if (!dlist_empty(&entry->siblings)) {
+		dlist_remove(&entry->siblings);
+
+		return FI_SUCCESS;
+	}
+
+	return -FI_ENOENT;
+}
+
 
 void _gnix_convert_key_to_mhdl_no_crc(
 		gnix_mr_key_t *key,
@@ -688,6 +840,10 @@ static int __gnix_mr_cache_init(
 		goto err_sfl_init;
 	}
 
+	/* initialize the slowpath heads */
+	dlist_init(&cache_p->inuse_sp_head);
+	dlist_init(&cache_p->stale_sp_head);
+
 	/* initialize the element counts. If we are reinitializing a dead cache,
 	 *   destroy will have already set the element counts
 	 */
@@ -843,20 +999,6 @@ int _gnix_mr_cache_flush(gnix_mr_cache_t *cache)
 	return FI_SUCCESS;
 }
 
-static inline struct gnix_mr_rbt_entry *__allocate_rbt_entry(
-		gnix_mr_cache_t *cache)
-{
-	int rc;
-	struct slist_entry *entry = NULL;
-
-	rc = _gnix_sfe_alloc(&entry, &cache->rbtlist_free);
-	if (rc != FI_SUCCESS) {
-		return NULL;
-	}
-
-	return container_of(entry, struct gnix_mr_rbt_entry, free_list_entry);
-}
-
 static int __mr_cache_lookup_inuse_fastpath(
 		gnix_mr_cache_t *cache,
 		gnix_mr_cache_key_t *key,
@@ -910,7 +1052,6 @@ static int __mr_cache_lookup_stale_fastpath(
 	int ret = -FI_ENOENT;
 	gnix_mr_cache_key_t *e_key;
 	gnix_mr_cache_entry_t *current_entry;
-	struct gnix_mr_rbt_entry *rbt_entry;
 
 	/* initialize to NULL */
 	*entry = NULL;
@@ -921,47 +1062,23 @@ static int __mr_cache_lookup_stale_fastpath(
 				(void **) &current_entry);
 
 		if (current_entry->key.length >= length) {
-			/* since we always check the inuse tree first, we already know
-			 * there isn't a match in the inuse tree. Just allocate the
-			 * rbt entry.
-			 */
-			rbt_entry = __allocate_rbt_entry(cache);
-			if(!rbt_entry)
-				return -FI_ENOMEM;
-
 			/* remove entry from stale and place into inuse */
 			atomic_set(&current_entry->ref_cnt, 1);
 
 			/* clear the element from the stale cache */
-			rbtErase(cache->stale, iter);
-			atomic_dec(&cache->stale_elements);
+			rc = rbtErase(cache->stale, iter);
+			assert(rc == RBT_STATUS_OK);
 
-			dlist_remove(&current_entry->lru_entry);
+			__mr_cache_remove_stale_entry_no_tree(cache, current_entry);
 
 			GNIX_INFO(FI_LOG_MR,
 					"moving key %llu:%llu from stale into inuse\n",
 					current_entry->key.address,
 					current_entry->key.length);
 
-			dlist_insert_head(&current_entry->tree_entry, &rbt_entry->list);
-
-			rc = rbtInsert(cache->inuse, &current_entry->key,
-					rbt_entry);
-			if (rc != RBT_STATUS_OK) {
-				GNIX_WARN(FI_LOG_MR, "failed to insert stale entry "
-						"into inuse cache, rc=%d", rc);
-
-				__mr_cache_entry_destroy(current_entry);
-				*entry = NULL;
-
-				_gnix_sfe_free(&rbt_entry->free_list_entry,
-						&cache->rbtlist_free);
-				ret = -FI_ENOSPC;
-			} else {
-				atomic_inc(&cache->inuse_elements);
+			ret = __insert_inuse_entry_sp(cache, current_entry);
+			if (!ret)
 				*entry = current_entry;
-				ret = FI_SUCCESS;
-			}
 		}
 	}
 
@@ -984,6 +1101,30 @@ static int __mr_cache_lookup_stale_slowpath(
 		gnix_mr_cache_entry_t **entry)
 {
 	int ret = -FI_ENOENT;
+	gnix_mr_cache_entry_t *current, *next;
+
+	dlist_for_each_safe(&cache->stale_sp_head, current, next, siblings) {
+		if (current->key.address > key->address)
+			break;
+
+		if (__can_subsume(&current->key, key)) {
+			/* found an entry which covers this range. remove and use it */
+			__mr_cache_remove_stale_entry(cache, current);
+
+			GNIX_INFO(FI_LOG_MR,
+					"moving key %llu:%llu from stale into inuse\n",
+					current->key.address,
+					current->key.length);
+
+			ret = __insert_inuse_entry_sp(cache, current);
+			if (!ret) {
+				*entry = current;
+				break;
+			} else {
+				__mr_cache_entry_destroy(current);
+			}
+		}
+	}
 
 	return ret;
 }
@@ -1021,6 +1162,8 @@ static int __mr_cache_create_registration(
 
 	dlist_init(&rbt_entry->list);
 	dlist_init(&current_entry->tree_entry);
+	dlist_init(&current_entry->children);
+	dlist_init(&current_entry->siblings);
 
 	/* TODO: should we just try the first nic we find? */
 	/* NOTE: Can we assume the list is safe for access without a lock? */
@@ -1090,6 +1233,8 @@ static int __mr_cache_create_registration(
 		 */
 		dlist_insert_head(&current_entry->tree_entry, &rbt_entry->list);
 	}
+
+
 
 	atomic_inc(&cache->inuse_elements);
 	atomic_initialize(&current_entry->ref_cnt, 1);

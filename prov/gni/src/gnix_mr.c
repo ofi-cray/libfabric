@@ -1301,7 +1301,7 @@ static int __mr_cache_register(
 	if (unlikely(cache->attr.hard_reg_limit > 0 &&
 			(atomic_get(&cache->inuse_elements) >=
 					cache->attr.hard_reg_limit)))
-		return FI_ENOSPC;
+		return -FI_ENOSPC;
 
 	if (cache->attr.lazy_deregistration) {
 		/* if lazy deregistration is in use, we can check the

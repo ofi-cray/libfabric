@@ -89,6 +89,7 @@ typedef struct gnix_mr_cache_entry {
 } gnix_mr_cache_entry_t;
 
 struct gnix_mr_rbt_entry {
+	struct slist_entry free_list_entry;
 	struct dlist_entry list;
 };
 
@@ -343,7 +344,8 @@ static inline int __mr_cache_entry_put(
 			GNIX_INFO(FI_LOG_MR, "removing empty list, rbt_entry=%p\n",
 					rbt_entry);
 			rbtErase(cache->inuse, iter);
-			free(rbt_entry);
+			_gnix_sfe_free(&rbt_entry->free_list_entry,
+					&cache->rbtlist_free);
 		}
 		atomic_dec(&cache->inuse_elements);
 
@@ -636,7 +638,7 @@ static int __gnix_mr_cache_init(
 {
 	gnix_mr_cache_attr_t *cache_attr = &__default_mr_cache_attr;
 	gnix_mr_cache_t *cache_p;
-	int rc;
+	int rc, ret;
 
 	GNIX_TRACE(FI_LOG_MR, "\n");
 
@@ -679,6 +681,13 @@ static int __gnix_mr_cache_init(
 		}
 	}
 
+	ret = _gnix_sfl_init(sizeof(struct gnix_mr_rbt_entry), 0, 32,
+			32, 2, 128, &cache_p->rbtlist_free);
+	if (ret != FI_SUCCESS) {
+		rc = -FI_ENOMEM;
+		goto err_sfl_init;
+	}
+
 	/* initialize the element counts. If we are reinitializing a dead cache,
 	 *   destroy will have already set the element counts
 	 */
@@ -692,6 +701,11 @@ static int __gnix_mr_cache_init(
 
 	return FI_SUCCESS;
 
+err_sfl_init:
+	if (cache_p->attr.lazy_deregistration) {
+		rbtDelete(cache_p->stale);
+		cache_p->stale = NULL;
+	}
 err_stale:
 	rbtDelete(cache_p->inuse);
 	cache_p->inuse = NULL;
@@ -731,6 +745,8 @@ int _gnix_mr_cache_destroy(gnix_mr_cache_t *cache)
 		rbtDelete(cache->stale);
 		cache->stale = NULL;
 	}
+
+	_gnix_sfl_destroy(&cache->rbtlist_free);
 
 	cache->state = GNIX_MRC_STATE_DEAD;
 	free(cache);
@@ -827,16 +843,18 @@ int _gnix_mr_cache_flush(gnix_mr_cache_t *cache)
 	return FI_SUCCESS;
 }
 
-static inline struct gnix_mr_rbt_entry *__allocate_rbt_entry(void)
+static inline struct gnix_mr_rbt_entry *__allocate_rbt_entry(
+		gnix_mr_cache_t *cache)
 {
-	struct gnix_mr_rbt_entry *ret;
+	int rc;
+	struct slist_entry *entry = NULL;
 
-	ret = calloc(1, sizeof(*ret));
-	if (ret) {
-		dlist_init(&ret->list);
+	rc = _gnix_sfe_alloc(&entry, &cache->rbtlist_free);
+	if (rc != FI_SUCCESS) {
+		return NULL;
 	}
 
-	return ret;
+	return container_of(entry, struct gnix_mr_rbt_entry, free_list_entry);
 }
 
 static int __mr_cache_lookup_inuse_fastpath(
@@ -907,7 +925,7 @@ static int __mr_cache_lookup_stale_fastpath(
 			 * there isn't a match in the inuse tree. Just allocate the
 			 * rbt entry.
 			 */
-			rbt_entry = __allocate_rbt_entry();
+			rbt_entry = __allocate_rbt_entry(cache);
 			if(!rbt_entry)
 				return -FI_ENOMEM;
 
@@ -936,7 +954,8 @@ static int __mr_cache_lookup_stale_fastpath(
 				__mr_cache_entry_destroy(current_entry);
 				*entry = NULL;
 
-				free(rbt_entry);
+				_gnix_sfe_free(&rbt_entry->free_list_entry,
+						&cache->rbtlist_free);
 				ret = -FI_ENOSPC;
 			} else {
 				atomic_inc(&cache->inuse_elements);
@@ -994,7 +1013,7 @@ static int __mr_cache_create_registration(
 	if (!current_entry)
 		return -FI_ENOMEM;
 
-	rbt_entry = __allocate_rbt_entry();
+	rbt_entry = __allocate_rbt_entry(cache);
 	if (!rbt_entry) {
 		free(current_entry);
 		return -FI_ENOMEM;
@@ -1053,12 +1072,14 @@ static int __mr_cache_create_registration(
 			}
 
 			free(current_entry);
-			free(rbt_entry);
+			_gnix_sfe_free(&rbt_entry->free_list_entry,
+					&cache->rbtlist_free);
 			return -FI_ENOMEM;
 		}
 	} else {
 		/* allocation is no longer needed */
-		free(rbt_entry);
+		_gnix_sfe_free(&rbt_entry->free_list_entry,
+				&cache->rbtlist_free);
 
 		rbtKeyValue(cache->inuse, iter, (void **) &key, (void **) &rbt_entry);
 

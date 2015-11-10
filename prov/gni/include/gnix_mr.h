@@ -33,12 +33,7 @@
 
 /**
  * @note The GNIX memory registration cache has the following properties:
- *         - Not thread safe. The calls to the internal cache are guarded by
- *             a coarse-grained internal lock. Race conditions cannot occur
- *             unless the lock has been released prior to the completion
- *             of a cache function call. The lock is handled internally, so
- *             the application may treat the memory registration cache as
- *             thread-safe, even though it is essentially single threaded.
+ *         - Not thread safe
  *         - Uses two red black trees for internal storage and fast lookups
  *         - The hard registration limit includes the number of stale entries.
  *             Stale entries will be evicted to make room for new entries as
@@ -73,6 +68,7 @@
 #include "rdma/fi_domain.h"
 #include "gnix_util.h"
 #include "rbtree.h"
+#include "gnix_freelist.h"
 
 #define GNIX_MR_PAGE_SHIFT 12
 #define GNIX_MR_PFN_BITS 37
@@ -195,6 +191,7 @@ typedef struct gnix_mr_cache {
 	gnix_mr_cache_attr_t attr;
 	RbtHandle inuse;
 	RbtHandle stale;
+	struct gnix_s_freelist rbtlist_free;
 	atomic_t inuse_elements;
 	atomic_t stale_elements;
 	struct dlist_entry lru_head;

@@ -226,13 +226,19 @@ void rdm_rma_teardown(void)
 {
 	int ret = 0;
 
-	fi_close(&read_cntr->fid);
-	fi_close(&write_cntr->fid);
+	ret = fi_close(&read_cntr->fid);
+	cr_assert(!ret, "failure in closing read counter.");
+
+	ret = fi_close(&write_cntr->fid);
+	cr_assert(!ret, "failure in closing write counter.");
 
 	free(uc_source);
 
-	fi_close(&loc_mr->fid);
-	fi_close(&rem_mr->fid);
+	ret = fi_close(&loc_mr->fid);
+	cr_assert(!ret, "failure in closing av.");
+
+	ret = fi_close(&rem_mr->fid);
+	cr_assert(!ret, "failure in closing av.");
 
 	free(target);
 	free(source);
@@ -242,6 +248,9 @@ void rdm_rma_teardown(void)
 
 	ret = fi_close(&ep[1]->fid);
 	cr_assert(!ret, "failure in closing ep.");
+
+	ret = fi_close(&recv_cq->fid);
+	cr_assert(!ret, "failure in recv cq.");
 
 	ret = fi_close(&send_cq->fid);
 	cr_assert(!ret, "failure in send cq.");

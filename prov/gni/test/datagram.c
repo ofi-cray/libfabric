@@ -152,7 +152,7 @@ Test(dg_allocation, dgram_verify_cdm_id)
 	ep_priv = container_of(ep, struct gnix_fid_ep, ep_fid);
 	cm_nic = ep_priv->cm_nic;
 	cr_assert((cm_nic != NULL), "cm_nic NULL");
-	cr_assert((cm_nic->cdm_id == correct), "cm_nic incorrect cdm_id");
+	cr_assert((cm_nic->my_name.gnix_addr.cdm_id == correct), "cm_nic incorrect cdm_id");
 }
 
 
@@ -376,11 +376,9 @@ Test(dg_allocation,  dgram_wc_post_exchg)
 				&dgram_bnd);
 	cr_assert((ret == 0), "_gnix_dgram_alloc bnd");
 
-	dgram_bnd->target_addr.device_addr = cm_nic->device_addr;
-	dgram_bnd->target_addr.cdm_id = cm_nic->cdm_id;
+	dgram_bnd->target_addr = cm_nic->my_name.gnix_addr;
 
-	local_address.device_addr = cm_nic->device_addr;
-	local_address.cdm_id = cm_nic->cdm_id;
+	local_address = cm_nic->my_name.gnix_addr;
 
 	dgram_bnd->callback_fn = dgram_callback_fn;
 	ret = _gnix_dgram_bnd_post(dgram_bnd);
@@ -413,7 +411,7 @@ Test(dg_allocation,  dgram_wc_post_exchg_manual, .init = dg_setup_prog_manual)
 	cm_nic = ep_priv->cm_nic;
 	cr_assert((cm_nic != NULL), "cm_nic NULL");
 
-	cr_assert(cm_nic->control_progress == FI_PROGRESS_MANUAL);
+	cr_assert(cm_nic->ctrl_progress == FI_PROGRESS_MANUAL);
 
 	cr_assert((cm_nic->dgram_hndl != NULL), "cm_nic dgram_hndl NULL");
 
@@ -429,11 +427,9 @@ Test(dg_allocation,  dgram_wc_post_exchg_manual, .init = dg_setup_prog_manual)
 				&dgram_bnd);
 	cr_assert((ret == 0), "_gnix_dgram_alloc bnd");
 
-	dgram_bnd->target_addr.device_addr = cm_nic->device_addr;
-	dgram_bnd->target_addr.cdm_id = cm_nic->cdm_id;
+	dgram_bnd->target_addr = cm_nic->my_name.gnix_addr;
 
-	local_address.device_addr = cm_nic->device_addr;
-	local_address.cdm_id = cm_nic->cdm_id;
+	local_address = cm_nic->my_name.gnix_addr;
 
 	dgram_bnd->callback_fn = dgram_callback_fn;
 	ret = _gnix_dgram_bnd_post(dgram_bnd);

@@ -85,14 +85,14 @@ char *source;
 struct fid_mr *rem_mr, *loc_mr;
 uint64_t mr_key;
 
-void rdm_tagged_sr_setup(void)
+static void setup_dom(enum fi_progress pm)
 {
-	int ret = 0;
-	struct fi_av_attr attr;
-	size_t addrlen = 0;
+	int ret;
 
 	hints = fi_allocinfo();
 	cr_assert(hints, "fi_allocinfo");
+
+	hints->domain_attr->data_progress = pm;
 
 	hints->domain_attr->cq_data_size = 4;
 	hints->mode = ~0;
@@ -107,6 +107,14 @@ void rdm_tagged_sr_setup(void)
 
 	ret = fi_domain(fab, fi, &dom, NULL);
 	cr_assert(!ret, "fi_domain");
+
+}
+
+static void setup_ep(void)
+{
+	int ret;
+	struct fi_av_attr attr;
+	size_t addrlen = 0;
 
 	attr.type = FI_AV_MAP;
 	attr.count = 16;
@@ -170,6 +178,11 @@ void rdm_tagged_sr_setup(void)
 
 	ret = fi_enable(ep[1]);
 	cr_assert(!ret, "fi_ep_enable");
+}
+
+static void setup_mr(void)
+{
+	int ret;
 
 	target = malloc(BUF_SZ);
 	assert(target);
@@ -188,7 +201,15 @@ void rdm_tagged_sr_setup(void)
 	mr_key = fi_mr_key(rem_mr);
 }
 
-void rdm_tagged_sr_teardown(void)
+static void rdm_tagged_sr_setup(void)
+{
+	/* Change this to FI_PROGRESS_AUTO when supported */
+	setup_dom(FI_PROGRESS_MANUAL);
+	setup_ep();
+	setup_mr();
+}
+
+static void rdm_tagged_sr_teardown(void)
 {
 	int ret = 0;
 
@@ -659,3 +680,130 @@ Test(rdm_tagged_sr, multi_tsend_trecv) {
 	}
 
 }
+
+static void do_tagged_sr_pipelined(void)
+{
+	int i, it, s, ret;
+	const int iters = 37;
+	const int num_msgs = 61;
+	const int msgs_per_stage = 17;
+	const int num_stages = num_msgs/msgs_per_stage +
+		(num_msgs%msgs_per_stage != 0);
+	const int slen = 256;
+	uint64_t tags[num_msgs];
+	uint64_t rtag = 0x01000000;
+	uint64_t ignore = 0xf0ffffff;
+	char msg[num_msgs][slen];
+	struct fi_cq_tagged_entry cqe;
+
+	srand(time(NULL));
+
+	for (it = 0; it < iters; it++) {
+		dbg_printf("iter %d\n", it);
+		for (s = 0; s < num_stages; s++) {
+			dbg_printf("\tsending stage %d\n", s);
+			for (i = s*msgs_per_stage;
+			     i < (s+1)*msgs_per_stage && i < num_msgs;
+			     i++) {
+				tags[i] = 0x01010abc + it*iters + i;
+
+				sprintf(msg[i], "%d\n", i%10);
+				ret = fi_tsend(ep[1], msg[i], strlen(msg[i]),
+					       NULL, gni_addr[0], tags[i],
+					       NULL);
+				cr_assert(ret == FI_SUCCESS);
+			}
+
+			for (i = s*msgs_per_stage;
+			     i < (s+1)*msgs_per_stage && i < num_msgs;
+			     i++) {
+				do {
+					ret = fi_cq_read(msg_cq[1], &cqe, 1);
+					cr_assert((ret == 1) ||
+						  (ret == -FI_EAGAIN));
+				} while (ret == -FI_EAGAIN);
+
+				cr_assert(cqe.tag == 0);
+			}
+			cr_assert(cqe.len == 0);
+		}
+
+		for (s = 0; s < num_stages; s++) {
+			dbg_printf("\treceiving stage %d\n", s);
+			for (i = s*msgs_per_stage;
+			     i < (s+1)*msgs_per_stage && i < num_msgs;
+			     i++) {
+				ret = fi_trecv(ep[0], &target[i], BUF_SZ,
+					       fi_mr_desc(loc_mr),
+					       gni_addr[1], rtag, ignore,
+					       NULL);
+				cr_assert(ret == FI_SUCCESS);
+			}
+
+			for (i = s*msgs_per_stage;
+			     i < (s+1)*msgs_per_stage && i < num_msgs;
+			     i++) {
+				do {
+					ret = fi_cq_read(msg_cq[0], &cqe, 1);
+					cr_assert((ret == 1) ||
+						  (ret == -FI_EAGAIN));
+				} while (ret == -FI_EAGAIN);
+
+				cr_assert(rtag != cqe.tag);
+
+				cr_assert(ret == 1);
+				cr_assert(cqe.len == 2);
+
+				/* zero out the tag for error checking below */
+				tags[cqe.tag - (0x01010abc + it*iters)] = 0;
+			}
+		}
+
+		/* Make sure we got everything */
+		for (i = 0; i < num_msgs; i++) {
+			cr_assert(tags[i] == 0);
+		}
+	}
+
+}
+
+/* Add this test when FI_PROGRESS_AUTO is implemented */
+Test(rdm_tagged_sr, multi_tsend_trecv_pipelined, .disabled = true) {
+	do_tagged_sr_pipelined();
+}
+
+/* Call fi_gni_domain_ops->set_val() with op and opval */
+static void progress_manual_dom_ops_setup(const dom_ops_val_t op,
+					  const uint32_t opval)
+{
+	int ret;
+	uint32_t val = opval;
+	struct fi_gni_ops_domain *gni_domain_ops;
+
+	setup_dom(FI_PROGRESS_MANUAL);
+	ret = fi_open_ops(&dom->fid, FI_GNI_DOMAIN_OPS_1,
+			  0, (void **) &gni_domain_ops, NULL);
+	gni_domain_ops->set_val(&dom->fid, op, &val);
+	cr_assert(ret == FI_SUCCESS, "fi_open_ops");
+
+	setup_ep();
+	setup_mr();
+}
+
+static void mbox_max_credit_setup(void)
+{
+	/* Use this with manual progress */
+	progress_manual_dom_ops_setup(GNI_MBOX_MAX_CREDIT,
+				      122-1 /* 2*num_msgs-1 above */);
+}
+
+/* Suite of tests that should work with manual progress */
+TestSuite(rdm_tagged_sr_progress_manual,
+	  .init = mbox_max_credit_setup,
+	  .fini = rdm_tagged_sr_teardown,
+	  .disabled = false);
+
+Test(rdm_tagged_sr_progress_manual, multi_tsend_trecv_pipelined) {
+	do_tagged_sr_pipelined();
+}
+

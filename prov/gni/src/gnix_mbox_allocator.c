@@ -709,7 +709,7 @@ int _gnix_mbox_alloc(struct gnix_mbox_alloc_handle *alloc_handle,
 		position = ret;
 	}
 
-	ret = __fill_mbox(alloc_handle, slab, position, ptr);
+	ret = __fill_mbox(alloc_handle, slab, (size_t) position, ptr);
 	if (ret)
 		GNIX_WARN(FI_LOG_EP_CTRL, "Creating mbox failed.\n");
 

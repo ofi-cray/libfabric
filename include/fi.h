@@ -33,13 +33,12 @@
 #ifndef _FI_H_
 #define _FI_H_
 
-#if HAVE_CONFIG_H
-#  include <config.h>
-#endif /* HAVE_CONFIG_H */
+#include "config.h"
 
 #include <assert.h>
 #include <string.h>
 #include <pthread.h>
+#include <sys/param.h>
 
 #include <rdma/fabric.h>
 #include <rdma/fi_prov.h>
@@ -80,7 +79,23 @@ static inline void *mem_dup(const void *src, size_t size)
 	return dest;
 }
 
-#if __BYTE_ORDER == __LITTLE_ENDIAN
+/*
+ * OS X doesn't have __BYTE_ORDER, Linux usually has BYTE_ORDER but not under
+ * all features.h flags
+ */
+#if !defined(BYTE_ORDER)
+#  if defined(__BYTE_ORDER) && \
+      defined(__LITTLE_ENDIAN) && \
+      defined(__BIG_ENDIAN)
+#    define BYTE_ORDER __BYTE_ORDER
+#    define LITTLE_ENDIAN __LITTLE_ENDIAN
+#    define BIG_ENDIAN __BIG_ENDIAN
+#  else
+#    error "cannot determine endianness!"
+#  endif
+#endif
+
+#if BYTE_ORDER == LITTLE_ENDIAN
 #ifndef htonll
 static inline uint64_t htonll(uint64_t x) { return bswap_64(x); }
 #endif
@@ -175,23 +190,32 @@ typedef struct {
 	int is_initialized;
 } fastlock_t;
 
-#  define fastlock_init(lock)                     \
-	do {                                      \
-		(lock)->is_initialized = 1;       \
-		fastlock_init_(&(lock)->impl);    \
-	} while (0)
-
-#  define fastlock_destroy(lock)                  \
-	do {                                      \
-		assert((lock)->is_initialized);   \
-		(lock)->is_initialized = 0;       \
-		fastlock_destroy_(&(lock)->impl); \
-	} while (0)
-
-static inline int fastlock_acquire(fastlock_t *lock)
+static inline int fastlock_init(fastlock_t *lock)
 {
+	int ret;
+
+	ret = fastlock_init_(&lock->impl);
+	lock->is_initialized = !ret;
+	return ret;
+}
+
+static inline void fastlock_destroy(fastlock_t *lock)
+{
+	int ret;
+
 	assert(lock->is_initialized);
-	return fastlock_acquire_(&lock->impl);
+	lock->is_initialized = 0;
+	ret = fastlock_destroy_(&lock->impl);
+	assert(!ret);
+}
+
+static inline void fastlock_acquire(fastlock_t *lock)
+{
+	int ret;
+
+	assert(lock->is_initialized);
+	ret = fastlock_acquire_(&lock->impl);
+	assert(!ret);
 }
 
 static inline int fastlock_tryacquire(fastlock_t *lock)
@@ -200,11 +224,14 @@ static inline int fastlock_tryacquire(fastlock_t *lock)
 	return fastlock_tryacquire_(&lock->impl);
 }
 
-#  define fastlock_release(lock)                  \
-	do {                                      \
-		assert((lock)->is_initialized);   \
-		fastlock_release_(&(lock)->impl); \
-	} while (0)
+static inline void fastlock_release(fastlock_t *lock)
+{
+	int ret;
+
+	assert(lock->is_initialized);
+	ret = fastlock_release_(&lock->impl);
+	assert(!ret);
+}
 
 #else /* !ENABLE_DEBUG */
 

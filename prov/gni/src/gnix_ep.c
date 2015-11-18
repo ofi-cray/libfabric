@@ -47,6 +47,7 @@
 #include "gnix_vc.h"
 #include "gnix_msg.h"
 #include "gnix_rma.h"
+#include "gnix_atomic.h"
 #include "gnix_cntr.h"
 
 
@@ -85,6 +86,7 @@ static struct fi_ops_ep gnix_ep_ops;
 static struct fi_ops_msg gnix_ep_msg_ops;
 static struct fi_ops_rma gnix_ep_rma_ops;
 struct fi_ops_tagged gnix_ep_tagged_ops;
+struct fi_ops_atomic gnix_ep_atomic_ops;
 
 /*******************************************************************************
  * EP common messaging wrappers.
@@ -636,6 +638,188 @@ ssize_t gnix_ep_tsenddata(struct fid_ep *ep, const void *buf, size_t len,
 			FI_TAGGED, tag);
 }
 
+
+/*******************************************************************************
+ * EP atomic API implementation.
+ ******************************************************************************/
+
+#define GNIX_ATOMIC_WRITE_FLAGS_DEF	(FI_ATOMIC | FI_WRITE)
+#define GNIX_ATOMIC_READ_FLAGS_DEF	(FI_ATOMIC | FI_READ)
+
+static int gnix_ep_atomic_valid(struct fid_ep *ep,
+				enum fi_datatype datatype,
+				enum fi_op op, size_t *count)
+{
+	if (count)
+		*count = 1;
+
+	return _gnix_atomic_cmd(datatype, op, GNIX_FAB_RQ_AMO) >= 0 ?
+			0 : -FI_ENOENT;
+}
+
+static int gnix_ep_fetch_atomic_valid(struct fid_ep *ep,
+				      enum fi_datatype datatype,
+				      enum fi_op op, size_t *count)
+{
+	if (count)
+		*count = 1;
+
+	return _gnix_atomic_cmd(datatype, op, GNIX_FAB_RQ_FAMO) >= 0 ?
+			0 : -FI_ENOENT;
+}
+
+static int gnix_ep_cmp_atomic_valid(struct fid_ep *ep,
+				    enum fi_datatype datatype,
+				    enum fi_op op, size_t *count)
+{
+	if (count)
+		*count = 1;
+
+	return _gnix_atomic_cmd(datatype, op, GNIX_FAB_RQ_CAMO) >= 0 ?
+			0 : -FI_ENOENT;
+}
+
+ssize_t gnix_ep_atomic_write(struct fid_ep *ep,
+			     const void *buf, size_t count, void *desc,
+			     fi_addr_t dest_addr,
+			     uint64_t addr, uint64_t key,
+			     enum fi_datatype datatype, enum fi_op op, void *context)
+{
+	struct gnix_fid_ep *gnix_ep;
+	struct fi_msg_atomic msg;
+	struct fi_ioc msg_iov;
+	struct fi_rma_ioc rma_iov;
+	uint64_t flags;
+
+	if (gnix_ep_atomic_valid(ep, datatype, op, NULL))
+		return -FI_ENOENT;
+
+	if (!ep)
+		return -FI_EINVAL;
+
+	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
+	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
+
+	msg_iov.addr = (void *)buf;
+	msg_iov.count = count;
+	msg.msg_iov = &msg_iov;
+	msg.desc = &desc;
+	msg.iov_count = 1;
+	msg.addr = dest_addr;
+	rma_iov.addr = addr;
+	rma_iov.count = 1;
+	rma_iov.key = key;
+	msg.rma_iov = &rma_iov;
+	msg.datatype = datatype;
+	msg.op = op;
+	msg.context = context;
+
+	flags = gnix_ep->op_flags | GNIX_ATOMIC_WRITE_FLAGS_DEF;
+
+	return _gnix_atomic(gnix_ep, GNIX_FAB_RQ_AMO, &msg,
+			    NULL, NULL, 0, NULL, NULL, 0, flags);
+}
+
+ssize_t gnix_ep_atomic_readwrite(struct fid_ep *ep,
+				 const void *buf, size_t count, void *desc,
+				 void *result, void *result_desc,
+				 fi_addr_t dest_addr,
+				 uint64_t addr, uint64_t key,
+				 enum fi_datatype datatype, enum fi_op op,
+				 void *context)
+{
+	struct gnix_fid_ep *gnix_ep;
+	struct fi_msg_atomic msg;
+	struct fi_ioc msg_iov;
+	struct fi_rma_ioc rma_iov;
+	struct fi_ioc result_iov;
+	uint64_t flags;
+
+	if (gnix_ep_fetch_atomic_valid(ep, datatype, op, NULL))
+		return -FI_ENOENT;
+
+	if (!ep)
+		return -FI_EINVAL;
+
+	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
+	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
+
+	msg_iov.addr = (void *)buf;
+	msg_iov.count = count;
+	msg.msg_iov = &msg_iov;
+	msg.desc = &desc;
+	msg.iov_count = 1;
+	msg.addr = dest_addr;
+	rma_iov.addr = addr;
+	rma_iov.count = 1;
+	rma_iov.key = key;
+	msg.rma_iov = &rma_iov;
+	msg.datatype = datatype;
+	msg.op = op;
+	msg.context = context;
+	result_iov.addr = result;
+	result_iov.count = 1;
+
+	flags = gnix_ep->op_flags | GNIX_ATOMIC_READ_FLAGS_DEF;
+
+	return _gnix_atomic(gnix_ep, GNIX_FAB_RQ_FAMO, &msg,
+			    NULL, NULL, 0,
+			    &result_iov, &result_desc, 1,
+			    flags);
+}
+
+ssize_t gnix_ep_atomic_compwrite(struct fid_ep *ep,
+				 const void *buf, size_t count, void *desc,
+				 const void *compare, void *compare_desc,
+				 void *result, void *result_desc,
+				 fi_addr_t dest_addr,
+				 uint64_t addr, uint64_t key,
+				 enum fi_datatype datatype, enum fi_op op,
+				 void *context)
+{
+	struct gnix_fid_ep *gnix_ep;
+	struct fi_msg_atomic msg;
+	struct fi_ioc msg_iov;
+	struct fi_rma_ioc rma_iov;
+	struct fi_ioc result_iov;
+	struct fi_ioc compare_iov;
+	uint64_t flags;
+
+	if (gnix_ep_cmp_atomic_valid(ep, datatype, op, NULL))
+		return -FI_ENOENT;
+
+	if (!ep)
+		return -FI_EINVAL;
+
+	gnix_ep = container_of(ep, struct gnix_fid_ep, ep_fid);
+	assert((gnix_ep->type == FI_EP_RDM) || (gnix_ep->type == FI_EP_MSG));
+
+	msg_iov.addr = (void *)buf;
+	msg_iov.count = count;
+	msg.msg_iov = &msg_iov;
+	msg.desc = &desc;
+	msg.iov_count = 1;
+	msg.addr = dest_addr;
+	rma_iov.addr = addr;
+	rma_iov.count = 1;
+	rma_iov.key = key;
+	msg.rma_iov = &rma_iov;
+	msg.datatype = datatype;
+	msg.op = op;
+	msg.context = context;
+	result_iov.addr = result;
+	result_iov.count = 1;
+	compare_iov.addr = (void *)compare;
+	compare_iov.count = 1;
+
+	flags = gnix_ep->op_flags | GNIX_ATOMIC_READ_FLAGS_DEF;
+
+	return _gnix_atomic(gnix_ep, GNIX_FAB_RQ_CAMO, &msg,
+			    &compare_iov, &compare_desc, 1,
+			    &result_iov, &result_desc, 1,
+			    flags);
+}
+
 /*******************************************************************************
  * Base EP API function implementations.
  ******************************************************************************/
@@ -643,40 +827,33 @@ ssize_t gnix_ep_tsenddata(struct fid_ep *ep, const void *buf, size_t len,
 
 static int gnix_ep_control(fid_t fid, int command, void *arg)
 {
-	int i, ret = FI_SUCCESS;
+	int ret = FI_SUCCESS;
 	struct gnix_fid_ep *ep;
-	struct gnix_fid_domain *dom;
-	struct gnix_vc *vc;
+
+	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
 	ep = container_of(fid, struct gnix_fid_ep, ep_fid);
 
 	switch (command) {
 	/*
-	 * for FI_EP_RDM, post wc datagrams now
+	 * for FI_EP_RDM, enable the cm_nic associated
+	 * with this ep.
 	 */
 	case FI_ENABLE:
 		if (ep->type == FI_EP_RDM) {
-			dom = ep->domain;
-			for (i = 0; i < dom->fabric->n_wc_dgrams; i++) {
-				ret = _gnix_vc_alloc(ep, NULL, &vc);
-				if (ret != FI_SUCCESS) {
-					GNIX_WARN(FI_LOG_EP_CTRL,
-				     "_gnix_vc_alloc call returned %d\n", ret);
-					goto err;
-				}
-				ret = _gnix_vc_accept(vc);
-				if (ret != FI_SUCCESS) {
-					GNIX_WARN(FI_LOG_EP_CTRL,
-						"_gnix_vc_accept returned %d\n",
-						ret);
-					_gnix_vc_destroy(vc);
-					goto err;
-				} else {
-					fastlock_acquire(&ep->vc_list_lock);
-					dlist_insert_tail(&vc->entry,
-						       &ep->wc_vc_list);
-					fastlock_release(&ep->vc_list_lock);
-				}
+			ret = _gnix_vc_cm_init(ep->cm_nic);
+			if (ret != FI_SUCCESS) {
+				GNIX_WARN(FI_LOG_EP_CTRL,
+				     "_gnix_vc_cm_nic_init call returned %d\n",
+					ret);
+				goto err;
+			}
+			ret = _gnix_cm_nic_enable(ep->cm_nic);
+			if (ret != FI_SUCCESS) {
+				GNIX_WARN(FI_LOG_EP_CTRL,
+				     "_gnix_cm_nic_enable call returned %d\n",
+					ret);
+				goto err;
 			}
 		}
 		break;
@@ -700,9 +877,11 @@ static void __ep_destruct(void *obj)
 	struct gnix_nic *nic;
 	struct gnix_fid_av *av;
 	struct gnix_cm_nic *cm_nic;
+	gnix_ht_key_t *key_ptr;
 	struct gnix_fid_ep *ep = (struct gnix_fid_ep *) obj;
 
-	/* TODO: lots more stuff to do here */
+	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
+
 	if (ep->send_cq) {
 		_gnix_cq_poll_nic_rem(ep->send_cq, ep->nic);
 		_gnix_ref_put(ep->send_cq);
@@ -739,7 +918,6 @@ static void __ep_destruct(void *obj)
 
 	cm_nic = ep->cm_nic;
 	assert(cm_nic != NULL);
-	_gnix_cm_nic_free(cm_nic);
 
 	nic = ep->nic;
 	assert(nic != NULL);
@@ -749,14 +927,25 @@ static void __ep_destruct(void *obj)
 		_gnix_ref_put(av);
 
 	/*
-	 * clean up any vc hash table or vector
+	 * clean up any vc hash table or vector,
+	 * remove entry from addr_to_ep ht.
 	 */
 
 	if (ep->type == FI_EP_RDM) {
+
+		key_ptr = (gnix_ht_key_t *)&ep->my_name.gnix_addr;
+		ret =  _gnix_ht_remove(ep->cm_nic->addr_to_ep_ht,
+				       *key_ptr);
 		if (ep->vc_ht != NULL) {
-			_gnix_ht_destroy(ep->vc_ht);
-			free(ep->vc_ht);
-			ep->vc_ht = NULL;
+			ret = _gnix_ht_destroy(ep->vc_ht);
+			if (ret == FI_SUCCESS) {
+				free(ep->vc_ht);
+				ep->vc_ht = NULL;
+			} else {
+				GNIX_WARN(FI_LOG_EP_CTRL,
+					"_gnix_ht_destroy returned %s\n",
+					  fi_strerror(-ret));
+			}
 		}
 	}
 
@@ -765,6 +954,10 @@ static void __ep_destruct(void *obj)
 	assert(ret == FI_SUCCESS);
 
 	ep->nic = NULL;
+
+	/* This currently always returns FI_SUCCESS */
+	ret = _gnix_cm_nic_free(cm_nic);
+	assert(ret == FI_SUCCESS);
 
 	/*
 	 * Free fab_reqs
@@ -783,45 +976,18 @@ static int gnix_ep_close(fid_t fid)
 {
 	int ret = FI_SUCCESS;
 	struct gnix_fid_ep *ep;
-	struct gnix_vc *vc, *tvc;
 	int references_held;
 
 	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
 	ep = container_of(fid, struct gnix_fid_ep, ep_fid.fid);
 
-	/*
-	 * Destroy any VCs being used by this EP. This must occur
-	 * before destroying the EP, because the VCs contain a
-	 * reference to the EP.
-	 */
-	dlist_for_each_safe(&ep->wc_vc_list, vc, tvc, entry) {
-		dlist_remove(&vc->entry);
-		if (vc->conn_state == GNIX_VC_CONNECTED) {
-			ret = _gnix_vc_disconnect(vc);
-			if (ret != FI_SUCCESS) {
-				GNIX_WARN(FI_LOG_EP_CTRL,
-					"_gnix_vc_disconnect returned %d\n",
-					 ret);
-				goto err;
-			}
-		}
-		ret = _gnix_vc_destroy(vc);
-		if (ret != FI_SUCCESS) {
-			GNIX_WARN(FI_LOG_EP_CTRL,
-				"_gnix_vc_destroy returned %d\n",
-				 ret);
-			goto err;
-		}
-	}
-
 	references_held = _gnix_ref_put(ep);
 	if (references_held)
-			GNIX_INFO(FI_LOG_EP_CTRL, "failed to fully close ep due "
-					"to lingering references. references=%i ep=%p\n",
-					references_held, ep);
+		GNIX_INFO(FI_LOG_EP_CTRL, "failed to fully close ep due "
+			  "to lingering references. references=%i ep=%p\n",
+			  references_held, ep);
 
-err:
 	return ret;
 }
 
@@ -891,7 +1057,7 @@ static int gnix_ep_bind(fid_t fid, struct fid *bfid, uint64_t flags)
 		ep->av = av;
 		_gnix_ref_get(ep->av);
 		break;
-	case FI_CLASS_CNTR: /* TODO: need to support cntrs someday */
+	case FI_CLASS_CNTR:
 		cntr = container_of(bfid, struct gnix_fid_cntr, cntr_fid.fid);
 		if (ep->domain != cntr->domain) {
 			ret = -FI_EINVAL;
@@ -963,14 +1129,23 @@ err:
 	return ret;
 }
 
+static void __gnix_vc_destroy_ht_entry(void *val)
+{
+	struct gnix_vc *vc = (struct gnix_vc *) val;
+
+	_gnix_vc_destroy(vc);
+}
+
 int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
 		 struct fid_ep **ep, void *context)
 {
 	int ret = FI_SUCCESS;
 	int tsret = FI_SUCCESS;
+	uint32_t cdm_id;
 	struct gnix_fid_domain *domain_priv;
 	struct gnix_fid_ep *ep_priv;
 	gnix_hashtable_attr_t gnix_ht_attr;
+	gnix_ht_key_t *key_ptr;
 	struct gnix_nic_attr *attr = NULL;
 	struct gnix_nic_attr ded_nic_attr = {0};
 	struct gnix_tag_storage_attr untagged_attr = {
@@ -1023,8 +1198,6 @@ int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
 	ep_priv->domain = domain_priv;
 	ep_priv->type = info->ep_attr->type;
 
-	fastlock_init(&ep_priv->vc_list_lock);
-	dlist_init(&ep_priv->wc_vc_list);
 	atomic_initialize(&ep_priv->active_fab_reqs, 0);
 	_gnix_ref_init(&ep_priv->ref_cnt, 1, __ep_destruct);
 
@@ -1052,13 +1225,10 @@ int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
 	ep_priv->ep_fid.msg = &gnix_ep_msg_ops;
 	ep_priv->ep_fid.rma = &gnix_ep_rma_ops;
 	ep_priv->ep_fid.tagged = &gnix_ep_tagged_ops;
-	ep_priv->ep_fid.atomic = NULL;
+	ep_priv->ep_fid.atomic = &gnix_ep_atomic_ops;
 
 	ep_priv->ep_fid.cm = &gnix_cm_ops;
 
-	/*
-	 * TODO, initialize vc hash table
-	 */
 	if (ep_priv->type == FI_EP_RDM) {
 		ret = _gnix_cm_nic_alloc(domain_priv,
 					 info,
@@ -1083,6 +1253,30 @@ int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
 			ded_nic_attr.gni_nic_hndl =
 				ep_priv->cm_nic->gni_nic_hndl;
 			attr = &ded_nic_attr;
+			ep_priv->my_name = ep_priv->cm_nic->my_name;
+		} else {
+			ep_priv->my_name.gnix_addr.device_addr =
+				ep_priv->cm_nic->my_name.gnix_addr.device_addr;
+			ep_priv->my_name.cm_nic_cdm_id =
+				ep_priv->cm_nic->my_name.gnix_addr.cdm_id;
+			ret = _gnix_get_new_cdm_id(domain_priv, &cdm_id);
+			if (ret != FI_SUCCESS) {
+				GNIX_WARN(FI_LOG_EP_CTRL,
+					    "gnix_get_new_cdm_id call returned %s\n",
+					     fi_strerror(-ret));
+				goto err;
+			}
+			ep_priv->my_name.gnix_addr.cdm_id = cdm_id;
+		}
+
+		key_ptr = (gnix_ht_key_t *)&ep_priv->my_name.gnix_addr;
+		ret = _gnix_ht_insert(ep_priv->cm_nic->addr_to_ep_ht,
+					*key_ptr,
+					ep_priv);
+		if ((ret != FI_SUCCESS) && (ret != -FI_ENOSPC)) {
+			GNIX_WARN(FI_LOG_EP_CTRL,
+				  "__gnix_ht_insert returned %d\n",
+				  ret);
 		}
 
 		gnix_ht_attr.ht_initial_size = domain_priv->params.ct_init_size;
@@ -1091,7 +1285,8 @@ int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
 		gnix_ht_attr.ht_increase_type = GNIX_HT_INCREASE_MULT;
 		gnix_ht_attr.ht_collision_thresh = 500;
 		gnix_ht_attr.ht_hash_seed = 0xdeadbeefbeefdead;
-		gnix_ht_attr.ht_internal_locking = 1;
+		gnix_ht_attr.ht_internal_locking = 0;
+		gnix_ht_attr.destructor = __gnix_vc_destroy_ht_entry;
 
 		ep_priv->vc_ht = calloc(1, sizeof(struct gnix_hashtable));
 		if (ep_priv->vc_ht == NULL)
@@ -1103,6 +1298,7 @@ int gnix_ep_open(struct fid_domain *domain, struct fi_info *info,
 				     ret);
 			goto err;
 		}
+		fastlock_init(&ep_priv->vc_ht_lock);
 
 	} else {
 		ep_priv->cm_nic = NULL;
@@ -1163,25 +1359,24 @@ static inline struct gnix_fab_req *__find_tx_req(
 	struct gnix_fab_req *req = NULL;
 	struct slist_entry *entry;
 	struct gnix_vc *vc;
+	GNIX_HASHTABLE_ITERATOR(ep->vc_ht, iter);
 
 	GNIX_DEBUG(FI_LOG_EP_CTRL, "searching VCs for the correct context to"
 			" cancel, context=%p", context);
 
-	fastlock_acquire(&ep->vc_list_lock);
-	dlist_for_each(&ep->wc_vc_list, vc, entry)
-	{
-		GNIX_DEBUG(FI_LOG_EP_CTRL, "checking vc=%p\n", vc);
+	fastlock_acquire(&ep->vc_ht_lock);
+	while ((vc = _gnix_ht_iterator_next(&iter))) {
+		GNIX_INFO(0, "searching vc: %p\n", vc);
 		fastlock_acquire(&vc->tx_queue_lock);
 		entry = slist_remove_first_match(&vc->tx_queue,
 				__match_context, context);
 		fastlock_release(&vc->tx_queue_lock);
-
 		if (entry) {
 			req = container_of(entry, struct gnix_fab_req, slist);
 			break;
 		}
 	}
-	fastlock_release(&ep->vc_list_lock);
+	fastlock_release(&ep->vc_ht_lock);
 
 	return req;
 }
@@ -1218,6 +1413,8 @@ static ssize_t gnix_ep_cancel(fid_t fid, void *context)
 	uint64_t tag, flags;
 	size_t len;
 	int is_send = 0;
+
+	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
 	ep = container_of(fid, struct gnix_fid_ep, ep_fid.fid);
 
@@ -1284,6 +1481,8 @@ static ssize_t gnix_ep_cancel(fid_t fid, void *context)
 ssize_t gnix_cancel(fid_t fid, void *context)
 {
 	ssize_t ret;
+
+	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
 	switch (fid->fclass) {
 	case FI_CLASS_EP:
@@ -1366,3 +1565,21 @@ struct fi_ops_tagged gnix_ep_tagged_ops = {
 	.senddata = gnix_ep_tsenddata,
 	.injectdata = fi_no_tagged_injectdata,
 };
+
+struct fi_ops_atomic gnix_ep_atomic_ops = {
+	.size = sizeof(struct fi_ops_atomic),
+	.write = gnix_ep_atomic_write,
+//	.writev = sock_ep_atomic_writev,
+//	.writemsg = sock_ep_atomic_writemsg,
+//	.inject = sock_ep_atomic_inject,
+	.readwrite = gnix_ep_atomic_readwrite,
+//	.readwritev = sock_ep_atomic_readwritev,
+//	.readwritemsg = sock_ep_atomic_readwritemsg,
+	.compwrite = gnix_ep_atomic_compwrite,
+//	.compwritev = sock_ep_atomic_compwritev,
+//	.compwritemsg = sock_ep_atomic_compwritemsg,
+	.writevalid = gnix_ep_atomic_valid,
+	.readwritevalid = gnix_ep_fetch_atomic_valid,
+	.compwritevalid = gnix_ep_cmp_atomic_valid,
+};
+

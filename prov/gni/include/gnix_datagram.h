@@ -78,6 +78,7 @@ extern "C" {
  * @var wc_dgram_active_list head of active list of wildcard datagrams
  * @var dgram_base           starting address of memory block from
  *                           which datagram structures are allocated
+ * @var lock                 lock to protect dgram lists
  * @var progress_thread      pthread id of progress thread for this
  *                           datagram allocator
  * @var n_dgrams             number of bound datagrams managed by the
@@ -92,6 +93,7 @@ struct gnix_dgram_hndl {
 	struct dlist_entry wc_dgram_free_list;
 	struct dlist_entry wc_dgram_active_list;
 	struct gnix_datagram *dgram_base;
+	fastlock_t lock;
 	pthread_t progress_thread;
 	int n_dgrams;
 	int n_wc_dgrams;

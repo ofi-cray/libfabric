@@ -30,15 +30,14 @@
  * SOFTWARE.
  */
 
-#if HAVE_CONFIG_H
-#  include <config.h>
-#endif /* HAVE_CONFIG_H */
+#include "config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdarg.h>
+#include <inttypes.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
@@ -221,10 +220,13 @@ static void fi_tostr_protocol(char *buf, uint32_t protocol)
 	CASEENUMSTR(FI_PROTO_RDMA_CM_IB_RC);
 	CASEENUMSTR(FI_PROTO_IWARP);
 	CASEENUMSTR(FI_PROTO_IB_UD);
-	CASEENUMSTR(FI_PROTO_GNI);
 	CASEENUMSTR(FI_PROTO_PSMX);
 	CASEENUMSTR(FI_PROTO_UDP);
 	CASEENUMSTR(FI_PROTO_SOCK_TCP);
+	CASEENUMSTR(FI_PROTO_MXM);
+	CASEENUMSTR(FI_PROTO_IB_RDM);
+	CASEENUMSTR(FI_PROTO_IWARP_RDM);
+	CASEENUMSTR(FI_PROTO_GNI);
 	default:
 		if (protocol & FI_PROV_SPECIFIC)
 			strcatf(buf, "Provider specific");
@@ -280,7 +282,7 @@ static void fi_tostr_addr(char *buf, uint32_t addr_format,
 			p, 64);
 		break;
 	case FI_ADDR_GNI:  /*TODO: eventually something better */
-		sprintf(p, "0x%lx",*(uint64_t *)addr);
+		sprintf(p, "0x%" PRIx64,*(uint64_t *)addr);
 		break;
 	default:
 		sprintf(p, "%p", addr);

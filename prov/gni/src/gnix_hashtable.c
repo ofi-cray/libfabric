@@ -35,7 +35,7 @@
 #include <rdma/fi_errno.h>
 
 #include "gnix_hashtable.h"
-#include "fasthash/fasthash.h"
+#include "fasthash.h"
 
 #include "gnix_util.h"
 
@@ -65,7 +65,8 @@ gnix_hashtable_attr_t default_attr = {
 		.ht_increase_type    = GNIX_HT_INCREASE_MULT,
 		.ht_collision_thresh = __GNIX_HT_COLLISION_THRESH,
 		.ht_hash_seed        = 0,
-		.ht_internal_locking = 0
+		.ht_internal_locking = 0,
+		.destructor          = NULL
 };
 
 static gnix_hashtable_ops_t __gnix_lockless_ht_ops;
@@ -163,11 +164,15 @@ static inline int __gnix_ht_destroy_list(
 		struct dlist_entry *head)
 {
 	gnix_ht_entry_t *ht_entry, *iter;
+	void *value;
 	int entries_freed = 0;
 
 	dlist_for_each_safe(head, ht_entry, iter, entry) {
+		value = ht_entry->value;
 		__gnix_ht_delete_entry(ht_entry);
-
+		if (ht->ht_attr.destructor != NULL) {
+			ht->ht_attr.destructor(value);
+		}
 		++entries_freed;
 	}
 
@@ -721,6 +726,102 @@ int _gnix_ht_empty(gnix_hashtable_t *ht)
 	return atomic_get(&ht->ht_elements) == 0;
 }
 
+void *__gnix_ht_lf_iter_next(struct gnix_hashtable_iter *iter)
+{
+	gnix_ht_entry_t *ht_entry;
+	struct dlist_entry *head, *next;
+	int i;
+
+	/* take next entry in bin */
+	if (iter->cur_entry) {
+		head = &iter->ht->ht_lf_tbl[iter->cur_idx].head;
+		next = iter->cur_entry->next;
+		if (next != head) {
+			iter->cur_entry = next;
+			ht_entry = dlist_entry(next, gnix_ht_entry_t, entry);
+			return ht_entry->value;
+		}
+		iter->cur_idx++;
+	}
+
+	/* look for next bin with an entry */
+	for (i = iter->cur_idx; i < iter->ht->ht_size; i++) {
+		head = &iter->ht->ht_lf_tbl[i].head;
+		if (dlist_empty(head))
+			continue;
+
+		ht_entry = dlist_first_entry(head, gnix_ht_entry_t, entry);
+		iter->cur_idx = i;
+		iter->cur_entry = &ht_entry->entry;
+		return ht_entry->value;
+	}
+
+	return NULL;
+}
+
+void *__gnix_ht_lk_iter_next(struct gnix_hashtable_iter *iter)
+{
+	gnix_ht_lk_lh_t *lh;
+	gnix_ht_entry_t *ht_entry;
+	struct dlist_entry *head, *next;
+	int i;
+	void *value;
+
+	rwlock_rdlock(&iter->ht->ht_lock);
+
+	/* take next entry in bin */
+	if (iter->cur_entry) {
+		lh = &iter->ht->ht_lk_tbl[iter->cur_idx];
+
+		rwlock_rdlock(&lh->lh_lock);
+		head = &lh->head;
+		next = iter->cur_entry->next;
+		if (next != head) {
+			iter->cur_entry = next;
+			ht_entry = dlist_entry(next, gnix_ht_entry_t, entry);
+			value = ht_entry->value;
+			rwlock_unlock(&lh->lh_lock);
+
+			rwlock_unlock(&iter->ht->ht_lock);
+			return value;
+		}
+		rwlock_unlock(&lh->lh_lock);
+
+		iter->cur_idx++;
+	}
+
+	/* look for next bin with an entry */
+	for (i = iter->cur_idx; i < iter->ht->ht_size; i++) {
+		lh = &iter->ht->ht_lk_tbl[i];
+
+		rwlock_rdlock(&lh->lh_lock);
+		head = &lh->head;
+		if (dlist_empty(head)) {
+			rwlock_unlock(&lh->lh_lock);
+			continue;
+		}
+
+		ht_entry = dlist_first_entry(head, gnix_ht_entry_t, entry);
+		value = ht_entry->value;
+		rwlock_unlock(&lh->lh_lock);
+
+		iter->cur_idx = i;
+		iter->cur_entry = &ht_entry->entry;
+
+		rwlock_unlock(&iter->ht->ht_lock);
+		return value;
+	}
+
+	rwlock_unlock(&iter->ht->ht_lock);
+
+	return NULL;
+}
+
+void *_gnix_ht_iterator_next(struct gnix_hashtable_iter *iter)
+{
+	return iter->ht->ht_ops->iter_next(iter);
+}
+
 static gnix_hashtable_ops_t __gnix_lockless_ht_ops = {
 		.init          = __gnix_ht_lf_init,
 		.destroy       = __gnix_ht_lf_destroy,
@@ -728,7 +829,8 @@ static gnix_hashtable_ops_t __gnix_lockless_ht_ops = {
 		.remove        = __gnix_ht_lf_remove,
 		.lookup        = __gnix_ht_lf_lookup,
 		.resize        = __gnix_ht_lf_resize,
-		.retrieve_list = __gnix_ht_lf_retrieve_list
+		.retrieve_list = __gnix_ht_lf_retrieve_list,
+		.iter_next     = __gnix_ht_lf_iter_next
 };
 
 static gnix_hashtable_ops_t __gnix_locked_ht_ops = {
@@ -738,6 +840,6 @@ static gnix_hashtable_ops_t __gnix_locked_ht_ops = {
 		.remove        = __gnix_ht_lk_remove,
 		.lookup        = __gnix_ht_lk_lookup,
 		.resize        = __gnix_ht_lk_resize,
-		.retrieve_list = __gnix_ht_lk_retrieve_list
-
+		.retrieve_list = __gnix_ht_lk_retrieve_list,
+		.iter_next     = __gnix_ht_lk_iter_next
 };

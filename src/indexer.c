@@ -31,9 +31,7 @@
  *
  */
 
-#if HAVE_CONFIG_H
-#  include <config.h>
-#endif /* HAVE_CONFIG_H */
+#include "config.h"
 
 #include <errno.h>
 #include <sys/types.h>
@@ -121,6 +119,15 @@ void idx_replace(struct indexer *idx, int index, void *item)
 	entry[idx_entry_index(index)].item = item;
 }
 
+void idx_reset(struct indexer *idx)
+{
+	while (idx->size) {
+		free(idx->array[idx->size - 1]);
+		idx->array[idx->size - 1] = NULL;
+		idx->size--;
+	}
+	idx->free_list = 0;
+}
 
 static int idm_grow(struct index_map *idm, int index)
 {
@@ -169,3 +176,17 @@ void *idm_clear(struct index_map *idm, int index)
 	}
 	return item;
 }
+
+void idm_reset(struct index_map *idm)
+{
+	int i;
+
+	for (i=0; i<IDX_ARRAY_SIZE; i++) {
+		if (idm->array[i]) {
+			free(idm->array[i]);
+			idm->array[i] = NULL;
+			idm->count[i] = 0;
+		}
+	}
+}
+

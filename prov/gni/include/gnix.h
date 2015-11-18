@@ -171,6 +171,7 @@ extern "C" {
  * Valid completion event flags.  See fi_cq.3.
  */
 #define GNIX_RMA_COMPLETION_FLAGS	(FI_RMA | FI_READ | FI_WRITE)
+#define GNIX_AMO_COMPLETION_FLAGS	(FI_ATOMIC | FI_READ | FI_WRITE)
 
 /*
  * GNI provider fabric default values
@@ -279,15 +280,12 @@ struct gnix_fid_domain {
 	/* list nics this domain is attached to, TODO: thread safety */
 	struct dlist_entry nic_list;
 	struct gnix_fid_fabric *fabric;
+	struct gnix_cm_nic *cm_nic;
 	uint8_t ptag;
 	uint32_t cookie;
 	uint32_t cdm_id_seed;
 	/* user tunable parameters accessed via open_ops functions */
 	struct gnix_ops_domain params;
-	/* size of gni tx cqs for this domain */
-	uint32_t gni_tx_cq_size;
-	/* size of gni rx cqs for this domain */
-	uint32_t gni_rx_cq_size;
 	/* additional gni cq modes to use for this domain */
 	gni_cq_mode_t gni_cq_modes;
 	/* additional gni cq modes to use for this domain */
@@ -321,16 +319,15 @@ struct gnix_fid_ep {
 	struct gnix_fid_cntr *read_cntr;
 	struct gnix_fid_cntr *write_cntr;
 	struct gnix_fid_av *av;
-	/* cm nic bound to this ep (FID_EP_RDM only) */
+	struct gnix_ep_name my_name;
 	struct gnix_cm_nic *cm_nic;
 	struct gnix_nic *nic;
+	fastlock_t vc_ht_lock;
 	union {
 		struct gnix_hashtable *vc_ht;
 		struct gnix_vc **vc_table;      /* used for FI_AV_TABLE */
 		struct gnix_vc *vc;
 	};
-	fastlock_t vc_list_lock;
-	struct dlist_entry wc_vc_list;
 	/* lock for unexp and posted recv queue */
 	fastlock_t recv_queue_lock;
 	/* used for unexpected receives */
@@ -376,6 +373,11 @@ struct gnix_fid_av {
 	size_t count;
 	/* Hash table for mapping FI_AV_MAP */
 	struct gnix_hashtable *map_ht;
+	/*
+	 * linked list of blocks used for allocating entries
+	 *  for FI_AV_MAP
+	 */
+	struct slist block_list;
 	struct gnix_reference ref_cnt;
 };
 
@@ -396,7 +398,10 @@ enum gnix_fab_req_type {
 	GNIX_FAB_RQ_RDMA_WRITE,
 	GNIX_FAB_RQ_RDMA_READ,
 	GNIX_FAB_RQ_RECV,
-	GNIX_FAB_RQ_TRECV
+	GNIX_FAB_RQ_TRECV,
+	GNIX_FAB_RQ_AMO,
+	GNIX_FAB_RQ_FAMO,
+	GNIX_FAB_RQ_CAMO
 };
 
 struct gnix_fab_req_rma {
@@ -425,6 +430,20 @@ struct gnix_fab_req_msg {
 	uint64_t                     rma_id;
 };
 
+struct gnix_fab_req_amo {
+	uint64_t                 loc_addr;
+	struct gnix_fid_mem_desc *loc_md;
+	size_t                   len;
+	uint64_t                 rem_addr;
+	uint64_t                 rem_mr_key;
+	uint64_t                 imm;
+	enum fi_datatype         datatype;
+	enum fi_op               op;
+	uint64_t                 first_operand;
+	uint64_t                 second_operand;
+	void                     *read_buf;
+};
+
 /*
  * Fabric request layout, there is a one to one
  * correspondence between an application's invocation of fi_send, fi_recv
@@ -438,7 +457,7 @@ struct gnix_fab_req {
 	struct gnix_fid_ep        *gnix_ep;
 	void                      *user_context;
 	struct gnix_vc            *vc;
-	int                       (*send_fn)(void *);
+	int                       (*work_fn)(void *);
 	int                       modes;
 	int                       retries;
 	uint64_t                  flags;
@@ -449,6 +468,7 @@ struct gnix_fab_req {
 	union {
 		struct gnix_fab_req_rma rma;
 		struct gnix_fab_req_msg msg;
+		struct gnix_fab_req_amo amo;
 	};
 	char inject_buf[GNIX_INJECT_SIZE];
 };

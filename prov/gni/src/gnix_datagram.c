@@ -72,10 +72,6 @@ static void *_gnix_dgram_prog_thread_fn(void *the_arg)
 	struct gnix_dgram_hndl *the_hndl = (struct gnix_dgram_hndl *)the_arg;
 	sigset_t  sigmask;
 
-	/*
-	 * TODO: need to add a lock?
-	 */
-
 	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
 	/*
@@ -128,7 +124,7 @@ retry:
 		goto retry;
 
 	GNIX_WARN(FI_LOG_EP_CTRL,
-		"_gni_dgram_poll returned %d\n", ret);
+		"_gnix_dgram_poll returned %s\n", fi_strerror(-ret));
 
 	/*
 	 * TODO: need to be able to enqueue events on to the
@@ -243,6 +239,8 @@ int _gnix_dgram_alloc(struct gnix_dgram_hndl *hndl, enum gnix_dgram_type type,
 
 	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
+	fastlock_acquire(&hndl->lock);
+
 	if (type == GNIX_DGRAM_WC) {
 		the_free_list = &hndl->wc_dgram_free_list;
 		the_active_list = &hndl->wc_dgram_active_list;
@@ -262,6 +260,8 @@ int _gnix_dgram_alloc(struct gnix_dgram_hndl *hndl, enum gnix_dgram_type type,
 		}
 
 	}
+
+	fastlock_release(&hndl->lock);
 
 	if (d != NULL) {
 		d->r_index_in_buf = 0;
@@ -288,9 +288,11 @@ int _gnix_dgram_free(struct gnix_datagram *d)
 			/* TODO: have to handle this */
 	}
 
+	fastlock_acquire(&d->d_hndl->lock);
 	dlist_remove_init(&d->list);
 	d->state = GNIX_DGRAM_STATE_FREE;
 	dlist_insert_head(&d->list, d->free_list_head);
+	fastlock_release(&d->d_hndl->lock);
 	return ret;
 }
 
@@ -301,6 +303,7 @@ int _gnix_dgram_wc_post(struct gnix_datagram *d)
 
 	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
+	fastlock_acquire(&d->nic->lock);
 	status = GNI_EpPostDataWId(d->gni_ep,
 				   d->dgram_in_buf,
 				   GNI_DATAGRAM_MAXSIZE,
@@ -315,6 +318,7 @@ int _gnix_dgram_wc_post(struct gnix_datagram *d)
 		 */
 		d->state = GNIX_DGRAM_STATE_LISTENING;
 	}
+	fastlock_release(&d->nic->lock);
 
 	return ret;
 }
@@ -372,6 +376,7 @@ int _gnix_dgram_bnd_post(struct gnix_datagram *d)
 				ret);
 	}
 	fastlock_release(&d->nic->lock);
+
 	if (post) {
 		if ((status != GNI_RC_SUCCESS) &&
 			(status != GNI_RC_ERROR_RESOURCE)) {
@@ -382,10 +387,13 @@ int _gnix_dgram_bnd_post(struct gnix_datagram *d)
 				goto err;
 		}
 
-		/*
-		 * datagram is active now, connecting
-		 */
-		d->state = GNIX_DGRAM_STATE_CONNECTING;
+		if (status == GNI_RC_SUCCESS) {
+			/*
+			 * datagram is active now, connecting
+			 */
+			d->state = GNIX_DGRAM_STATE_CONNECTING;
+		} else
+			ret = -FI_EBUSY;
 	}
 
 err:
@@ -407,6 +415,8 @@ int  _gnix_dgram_poll(struct gnix_dgram_hndl *hndl,
 
 	cm_nic = hndl->cm_nic;
 	assert(cm_nic != NULL);
+
+	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
 	if (type == GNIX_DGRAM_BLOCK) {
 		status = GNI_PostdataProbeWaitById(cm_nic->gni_nic_hndl,
@@ -493,6 +503,7 @@ int  _gnix_dgram_poll(struct gnix_dgram_hndl *hndl,
 		case GNI_POST_TERMINATED:
 		case GNI_POST_ERROR:
 			ret = -FI_EIO;
+			break;
 		case GNI_POST_COMPLETED:
 			if (dg_ptr->callback_fn != NULL) {
 				responding_addr.device_addr =
@@ -551,6 +562,7 @@ int _gnix_dgram_hndl_alloc(const struct gnix_fid_fabric *fabric,
 
 	the_hndl->n_dgrams = fabric->n_bnd_dgrams;
 	the_hndl->n_wc_dgrams = fabric->n_wc_dgrams;
+	fastlock_init(&the_hndl->lock);
 
 	n_dgrams_tot = the_hndl->n_dgrams + the_hndl->n_wc_dgrams;
 

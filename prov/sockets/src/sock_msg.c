@@ -30,9 +30,7 @@
  * SOFTWARE.
  */
 
-#if HAVE_CONFIG_H
-#  include <config.h>
-#endif /* HAVE_CONFIG_H */
+#include "config.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -81,7 +79,7 @@ ssize_t sock_ep_recvmsg(struct fid_ep *ep, const struct fi_msg *msg,
 		return -FI_EINVAL;
 	}
 
-#ifdef ENABLE_DEBUG
+#if ENABLE_DEBUG
 	if (msg->iov_count > SOCK_EP_MAX_IOV_LIMIT)
 		return -FI_EINVAL;
 #endif
@@ -200,7 +198,7 @@ ssize_t sock_ep_sendmsg(struct fid_ep *ep, const struct fi_msg *msg,
 		return -FI_EINVAL;
 	}
 
-#ifdef ENABLE_DEBUG
+#if ENABLE_DEBUG
 	if (msg->iov_count > SOCK_EP_MAX_IOV_LIMIT)
 		return -FI_EINVAL;
 #endif
@@ -420,7 +418,7 @@ ssize_t sock_ep_trecvmsg(struct fid_ep *ep,
 		return -FI_EINVAL;
 	}
 
-#ifdef ENABLE_DEBUG
+#if ENABLE_DEBUG
 	if (msg->iov_count > SOCK_EP_MAX_IOV_LIMIT)
 		return -FI_EINVAL;
 #endif
@@ -549,7 +547,7 @@ ssize_t sock_ep_tsendmsg(struct fid_ep *ep,
 		return -FI_EINVAL;
 	}
 
-#ifdef ENABLE_DEBUG
+#if ENABLE_DEBUG
 	if (msg->iov_count > SOCK_EP_MAX_IOV_LIMIT)
 		return -FI_EINVAL;
 #endif

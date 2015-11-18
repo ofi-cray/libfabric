@@ -170,13 +170,13 @@ static void av_full_table_teardown(void)
 	av_teardown();
 }
 
-TestSuite(av_bare, .init = av_setup, .fini = av_teardown);
+TestSuite(av_bare, .init = av_setup, .fini = av_teardown, .disabled = false);
 
 TestSuite(av_full_map, .init = av_full_map_setup,
-		.fini = av_full_map_teardown);
+		.fini = av_full_map_teardown, .disabled = false);
 
 TestSuite(av_full_table, .init = av_full_table_setup,
-		.fini = av_full_table_teardown);
+		.fini = av_full_table_teardown, .disabled = false);
 
 static void invalid_addrlen_pointer_test(void)
 {

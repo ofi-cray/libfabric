@@ -94,7 +94,7 @@ ssize_t _psmx_recv(struct fid_ep *ep, void *buf, size_t len,
 		src_addr = 0;
 	}
 
-	if (ep_priv->recv_selective_completion && !(flags & FI_COMPLETION) && !context) {
+	if (ep_priv->recv_selective_completion && !(flags & FI_COMPLETION)) {
 		fi_context = &ep_priv->nocomp_recv_context;
 	}
 	else {
@@ -450,6 +450,18 @@ static ssize_t psmx_senddata(struct fid_ep *ep, const void *buf, size_t len,
 	return _psmx_send(ep, buf, len, desc, dest_addr, context,
 			  ep_priv->flags, (uint32_t)data);
 }
+
+static ssize_t psmx_injectdata(struct fid_ep *ep, const void *buf, size_t len,
+			       uint64_t data, fi_addr_t dest_addr)
+{
+	struct psmx_fid_ep *ep_priv;
+
+	ep_priv = container_of(ep, struct psmx_fid_ep, ep);
+
+	return _psmx_send(ep, buf, len, NULL, dest_addr, NULL,
+			  ep_priv->flags | FI_INJECT | PSMX_NO_COMPLETION,
+			  (uint32_t)data);
+}
 #endif
 
 struct fi_ops_msg psmx_msg_ops = {
@@ -463,9 +475,10 @@ struct fi_ops_msg psmx_msg_ops = {
 	.inject = psmx_inject,
 #if (PSM_VERNO_MAJOR >= 2)
 	.senddata = psmx_senddata,
+	.injectdata = psmx_injectdata,
 #else
 	.senddata = fi_no_msg_senddata,
-#endif
 	.injectdata = fi_no_msg_injectdata,
+#endif
 };
 

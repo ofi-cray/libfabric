@@ -42,8 +42,6 @@
 #include "gnix_nic.h"
 #include "gnix_util.h"
 
-/* TODO: should we use physical pages for gni cq rings? This is a question for
- * Zach */
 gni_cq_mode_t gnix_def_gni_cq_modes = GNI_CQ_PHYS_PAGES;
 
 /*******************************************************************************
@@ -383,7 +381,7 @@ int gnix_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 
 	domain->ptag = ptag;
 	domain->cookie = cookie;
-	domain->cdm_id_seed = getpid();  /*TODO: direct syscall better */
+	domain->cdm_id_seed = getpid();  /* TODO: direct syscall better */
 
 	/* user tunables */
 	domain->params.msg_rendezvous_thresh = default_msg_rendezvous_thresh;
@@ -396,11 +394,11 @@ int gnix_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 	domain->params.mbox_num_per_slab = default_mbox_num_per_slab;
 	domain->params.mbox_maxcredit = default_mbox_maxcredit;
 	domain->params.mbox_msg_maxsize = default_mbox_msg_maxsize;
+	domain->params.rx_cq_size = default_rx_cq_size;
+	domain->params.tx_cq_size = default_tx_cq_size;
 	domain->params.max_retransmits = default_max_retransmits;
 	domain->params.err_inject_count = default_err_inject_count;
 
-	domain->gni_tx_cq_size = default_tx_cq_size;
-	domain->gni_rx_cq_size = default_rx_cq_size;
 	domain->gni_cq_modes = gnix_def_gni_cq_modes;
 	_gnix_ref_init(&domain->ref_cnt, 1, __domain_destruct);
 

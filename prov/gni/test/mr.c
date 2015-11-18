@@ -334,7 +334,7 @@ Test(memory_registration_cache, register_1024_distinct_regions)
 /* Test registration of 1024 registrations backed by the same initial
  *   registration. There should only be a single registration in the cache
  */
-Test(memory_registration_cache, register_1024_non_unique_regions)
+Test(memory_registration_cache, register_1024_non_unique_regions, .disabled=true)
 {
 	int ret;
 	char *hugepage;
@@ -629,7 +629,7 @@ Test(memory_registration_cache, lru_evict_middle_entry)
  * version of what the test rdm_sr::send_autoreg_uncached does under
  * the covers (currently).
  */
-Test(memory_registration_cache, same_addr_incr_size)
+Test(memory_registration_cache, same_addr_incr_size, .disabled=true)
 {
 	int ret;
 	int i;
@@ -658,7 +658,7 @@ Test(memory_registration_cache, same_addr_incr_size)
 }
 
 /* Same as above, except with decreasing sizes */
-Test(memory_registration_cache, same_addr_decr_size)
+Test(memory_registration_cache, same_addr_decr_size, .disabled=true)
 {
 	int ret;
 	int i;

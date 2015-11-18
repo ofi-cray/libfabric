@@ -36,6 +36,12 @@
 
 #include "gnix.h"
 
+#define GNIX_CM_NIC_MAX_MSG_SIZE (GNI_DATAGRAM_MAXSIZE - sizeof(uint8_t))
+
+typedef int gnix_cm_nic_rcv_cb_func(struct gnix_cm_nic *cm_nic,
+				    char *rbuf,
+				    struct gnix_address addr);
+
 /**
  * @brief GNI provider connection management (cm) nic structure
  *
@@ -45,18 +51,17 @@
  * @var gni_nic_hndl   underlying gni nic handle associated with this nic
  * @var dgram_hndl     handle to dgram allocator associated with this nic
  * @var domain         GNI provider domain associated with this nic
+ * @var addr_to_ep_ht  Hash table for looking up ep bound to this
+ *                     cm nic, key is ep's gnix_address
  * @var wq_lock        spin lock for cm nic's work queue
  * @var cm_nic_wq      workqueue associated with this nic
- * @var cdm_id         cdm_id of this nic.  This is unique
- *                     on the local node for a given ptag/cookie.
+ * @var ref_cnt        used for internal reference counting
+ * @var ctl_progress   control progress type for this cm nic
+ * @var my_name        gnix ep name for this cm nic
+ * @var rcv_cb_fn      pointer to callback function used to process
+ *                     incoming messages received by this cm nic
  * @var ptag           ptag of this nic.
- * @var cookie         cookie of this nic.
  * @var device_id      local Aries device id associated with this nic.
- *                     This will always be zero unless Cray starts
- *                     selling systems with multiple aries/node.
- * @var device_addr    Aries network address associated with this nic.
- * @var name_type      name type for ep type this cm_nic is bound to,
- *                     either GNIX_EPN_TYPE_UNBOUND/GNIX_EPN_TYPE_BOUND
  */
 struct gnix_cm_nic {
 	fastlock_t lock;
@@ -64,16 +69,51 @@ struct gnix_cm_nic {
 	gni_nic_handle_t gni_nic_hndl;
 	struct gnix_dgram_hndl *dgram_hndl;
 	struct gnix_fid_domain *domain;
+	struct gnix_hashtable *addr_to_ep_ht;
 	fastlock_t wq_lock;
 	struct dlist_entry cm_nic_wq;
-	enum fi_progress control_progress;
-	uint32_t cdm_id;
+	struct gnix_reference ref_cnt;
+	enum fi_progress ctrl_progress;
+	struct gnix_ep_name my_name;
+	gnix_cm_nic_rcv_cb_func *rcv_cb_fn;
 	uint8_t ptag;
-	uint32_t cookie;
 	uint32_t device_id;
-	uint32_t device_addr;
-	uint32_t name_type;
 };
+
+
+/**
+ * @brief send a message to a cm_nic
+ *
+ * @param[in]  cm_nic   pointer to a previously allocated gnix_cm_nic struct
+ * @param[in]  sbuf     pointer to the beginning of a message to send
+ * @param[in]  len      length of message to send.  May not exceed GNI_DATAGRAM_MAXSIZE
+ *                      bytes.
+ * @param[in]  taddr    address of target cm_nic
+ * @return              FI_SUCCESS on success, -FI_EINVAL on invalid argument,
+ *                      -FI_AGAIN unable to send message , -FI_ENOSPC
+ *                      message too large
+ * Upon return, sbuf may be reused.
+ */
+int _gnix_cm_nic_send(struct gnix_cm_nic *cm_nic,
+		      char *sbuf, size_t len,
+		      struct gnix_address target_addr);
+
+/**
+ * @brief register a callback function to invoke upon receiving message
+ *
+ * @param[in] cm_nic   pointer to previously allocated gnix_cm_nic struct
+ * @param[in] recv_fn  pointer to receive function to invoke upon
+ *                     receipt of a message
+ * @param[out] o_fn    pointer to previously registered callback function
+ *                     message.  Must be GNI_DATAGRAM_MAXSIZE bytes in size.
+ * @return             FI_SUCCESS on success, -FI_EINVAL on invalid argument.
+ *
+ * This call is non-blocking.  If FI_SUCCESS is returned, a message
+ * sent from peer cm_nic at src_addr will be present in rbuf.
+ */
+int _gnix_cm_nic_reg_recv_fn(struct gnix_cm_nic *cm_nic,
+			     gnix_cm_nic_rcv_cb_func *recv_fn,
+			     gnix_cm_nic_rcv_cb_func **o_fn);
 
 /**
  * @brief Frees a previously allocated cm nic structure
@@ -87,6 +127,8 @@ int _gnix_cm_nic_free(struct gnix_cm_nic *cm_nic);
  * @brief allocates a cm nic structure
  *
  * @param[in]  domain   pointer to a previously allocated gnix_fid_domain struct
+ * @param[in]  info     pointer to fi_info struct returned from fi_getinfo (may
+ *                      be NULL)
  * @param[out] cm_nic   pointer to address where address of the allocated
  *                      cm nic structure should be returned
  * @return              FI_SUCCESS on success, -EINVAL on invalid argument,
@@ -96,6 +138,14 @@ int _gnix_cm_nic_free(struct gnix_cm_nic *cm_nic);
 int _gnix_cm_nic_alloc(struct gnix_fid_domain *domain,
 		       struct fi_info *info,
 		       struct gnix_cm_nic **cm_nic);
+
+/**
+ * @brief enable a cm_nic for receiving incoming connection requests
+ *
+ * @param[in] cm_nic   pointer to previously allocated gnix_cm_nic struct
+ * @return             FI_SUCCESS on success, -EINVAL on invalid argument.
+ */
+int _gnix_cm_nic_enable(struct gnix_cm_nic *cm_nic);
 
 /**
  * @brief poke the cm nic's progress engine

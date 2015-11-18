@@ -34,9 +34,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#if HAVE_CONFIG_H
-#  include <config.h>
-#endif /* HAVE_CONFIG_H */
+#include "config.h"
 
 #include <arpa/inet.h>
 #include <asm/types.h>
@@ -747,6 +745,9 @@ usdf_usnic_getinfo(uint32_t version, struct fid_fabric *fabric,
 	if (version > FI_EXT_USNIC_INFO_VERSION) {
 		return -FI_EINVAL;
 	}
+
+	/* this assignment was missing in libfabric v1.1.1 and earlier */
+	uip->ui_version = FI_EXT_USNIC_INFO_VERSION;
 
 	uip->ui.v1.ui_link_speed = dap->uda_bandwidth;
 	uip->ui.v1.ui_netmask_be = dap->uda_netmask_be;

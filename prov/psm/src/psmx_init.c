@@ -31,11 +31,9 @@
  */
 
 #include "psmx.h"
-#include "fi.h"
 #include "prov.h"
 
 volatile int psmx_init_count = 0;
-struct psmx_fid_fabric *psmx_active_fabric = NULL;
 
 struct psmx_env psmx_env = {
 	.name_server	= 1,
@@ -44,6 +42,7 @@ struct psmx_env psmx_env = {
 	.uuid		= PSMX_DEFAULT_UUID,
 	.delay		= 1,
 	.timeout	= 5,
+	.prog_thread	= 1,
 	.prog_interval	= -1,
 	.prog_affinity	= NULL,
 };
@@ -59,6 +58,7 @@ static void psmx_init_env(void)
 	fi_param_get_str(&psmx_prov, "uuid", &psmx_env.uuid);
 	fi_param_get_int(&psmx_prov, "delay", &psmx_env.delay);
 	fi_param_get_int(&psmx_prov, "timeout", &psmx_env.timeout);
+	fi_param_get_int(&psmx_prov, "prog_thread", &psmx_env.prog_thread);
 	fi_param_get_int(&psmx_prov, "prog_interval", &psmx_env.prog_interval);
 	fi_param_get_str(&psmx_prov, "prog_affinity", &psmx_env.prog_affinity);
 }
@@ -132,6 +132,7 @@ static int psmx_getinfo(uint32_t version, const char *node, const char *service,
 	void *dest_addr = NULL;
 	int ep_type = FI_EP_RDM;
 	int av_type = FI_AV_UNSPEC;
+	uint64_t mode = FI_CONTEXT;
 	enum fi_mr_mode mr_mode = FI_MR_SCALABLE;
 	enum fi_threading threading = FI_THREAD_COMPLETION;
 	enum fi_progress control_progress = FI_PROGRESS_MANUAL;
@@ -245,15 +246,21 @@ static int psmx_getinfo(uint32_t version, const char *node, const char *service,
 			goto err_out;
 		}
 
-		if ((hints->mode & PSMX_MODE) != PSMX_MODE) {
-			FI_INFO(&psmx_prov, FI_LOG_CORE,
-				"hints->mode=0x%llx, required=0x%llx\n",
-				hints->mode, PSMX_MODE);
-			goto err_out;
+		if ((hints->caps & FI_TAGGED) ||
+		    ((hints->caps & FI_MSG) && !psmx_env.am_msg)) {
+			if ((hints->mode & FI_CONTEXT) != FI_CONTEXT) {
+				FI_INFO(&psmx_prov, FI_LOG_CORE,
+					"hints->mode=0x%llx, required=0x%llx\n",
+					hints->mode, FI_CONTEXT);
+				goto err_out;
+			}
+		}
+		else {
+			mode = 0;
 		}
 
 		if (hints->fabric_attr && hints->fabric_attr->name &&
-		    strncmp(hints->fabric_attr->name, PSMX_FABRIC_NAME, PSMX_FABRIC_NAME_LEN)) {
+		    strcmp(hints->fabric_attr->name, PSMX_FABRIC_NAME)) {
 			FI_INFO(&psmx_prov, FI_LOG_CORE,
 				"hints->fabric_name=%s, supported=psm\n",
 				hints->fabric_attr->name);
@@ -262,8 +269,7 @@ static int psmx_getinfo(uint32_t version, const char *node, const char *service,
 
 		if (hints->domain_attr) {
 			if (hints->domain_attr->name &&
-			    strncmp(hints->domain_attr->name, PSMX_DOMAIN_NAME,
-				    PSMX_DOMAIN_NAME_LEN)) {
+			    strcmp(hints->domain_attr->name, PSMX_DOMAIN_NAME)) {
 				FI_INFO(&psmx_prov, FI_LOG_CORE,
 					"hints->domain_name=%s, supported=psm\n",
 					hints->domain_attr->name);
@@ -460,7 +466,7 @@ static int psmx_getinfo(uint32_t version, const char *node, const char *service,
 	psmx_info->domain_attr->resource_mgmt = FI_RM_ENABLED;
 	psmx_info->domain_attr->av_type = av_type;
 	psmx_info->domain_attr->mr_mode = mr_mode;
-	psmx_info->domain_attr->mr_key_size = sizeof(uint64_t);
+	psmx_info->domain_attr->mr_key_size = sizeof(uint16_t); /* limited by IDX_MAX_INDEX */
 	psmx_info->domain_attr->cq_data_size = 4;
 	psmx_info->domain_attr->cq_cnt = 65535;
 	psmx_info->domain_attr->ep_cnt = 65535;
@@ -473,7 +479,7 @@ static int psmx_getinfo(uint32_t version, const char *node, const char *service,
 
 	psmx_info->next = NULL;
 	psmx_info->caps = (hints && hints->caps) ? hints->caps : caps;
-	psmx_info->mode = PSMX_MODE;
+	psmx_info->mode = mode;
 	psmx_info->addr_format = FI_ADDR_PSMX;
 	psmx_info->src_addrlen = 0;
 	psmx_info->dest_addrlen = sizeof(psm_epid_t);
@@ -511,105 +517,6 @@ err_out:
 		free(dest_addr);
 
 	return err;
-}
-
-static int psmx_fabric_close(fid_t fid)
-{
-	struct psmx_fid_fabric *fabric;
-	void *exit_code;
-	int ret;
-
-	FI_INFO(&psmx_prov, FI_LOG_CORE, "\n");
-
-	fabric = container_of(fid, struct psmx_fid_fabric, fabric.fid);
-	if (! --fabric->refcnt) {
-		if (psmx_env.name_server &&
-		    !pthread_equal(fabric->name_server_thread, pthread_self())) {
-			ret = pthread_cancel(fabric->name_server_thread);
-			if (ret) {
-				FI_INFO(&psmx_prov, FI_LOG_CORE,
-					"pthread_cancel returns %d\n", ret);
-			}
-			ret = pthread_join(fabric->name_server_thread, &exit_code);
-			if (ret) {
-				FI_INFO(&psmx_prov, FI_LOG_CORE,
-					"pthread_join returns %d\n", ret);
-			}
-			else {
-				FI_INFO(&psmx_prov, FI_LOG_CORE,
-					"name server thread exited with code %ld (%s)\n",
-					(uintptr_t)exit_code,
-					(exit_code == PTHREAD_CANCELED) ? "PTHREAD_CANCELED" : "?");
-			}
-		}
-		if (fabric->active_domain)
-			fi_close(&fabric->active_domain->domain.fid);
-		assert(fabric == psmx_active_fabric);
-		psmx_active_fabric = NULL;
-		free(fid);
-	}
-
-	return 0;
-}
-
-static struct fi_ops psmx_fabric_fi_ops = {
-	.size = sizeof(struct fi_ops),
-	.close = psmx_fabric_close,
-};
-
-static struct fi_ops_fabric psmx_fabric_ops = {
-	.size = sizeof(struct fi_ops_fabric),
-	.domain = psmx_domain_open,
-	.passive_ep = fi_no_passive_ep,
-	.eq_open = psmx_eq_open,
-	.wait_open = psmx_wait_open,
-};
-
-static int psmx_fabric(struct fi_fabric_attr *attr,
-		       struct fid_fabric **fabric, void *context)
-{
-	struct psmx_fid_fabric *fabric_priv;
-	int ret;
-
-	FI_INFO(&psmx_prov, FI_LOG_CORE, "\n");
-
-	if (strncmp(attr->name, PSMX_FABRIC_NAME, PSMX_FABRIC_NAME_LEN))
-		return -FI_ENODATA;
-
-	if (psmx_active_fabric) {
-		psmx_active_fabric->refcnt++;
-		*fabric = &psmx_active_fabric->fabric;
-		return 0;
-	}
-
-	fabric_priv = calloc(1, sizeof(*fabric_priv));
-	if (!fabric_priv)
-		return -FI_ENOMEM;
-
-	fabric_priv->fabric.fid.fclass = FI_CLASS_FABRIC;
-	fabric_priv->fabric.fid.context = context;
-	fabric_priv->fabric.fid.ops = &psmx_fabric_fi_ops;
-	fabric_priv->fabric.ops = &psmx_fabric_ops;
-
-	psmx_get_uuid(fabric_priv->uuid);
-
-	if (psmx_env.name_server) {
-		ret = pthread_create(&fabric_priv->name_server_thread, NULL,
-				     psmx_name_server, (void *)fabric_priv);
-		if (ret) {
-			FI_INFO(&psmx_prov, FI_LOG_CORE, "pthread_create returns %d\n", ret);
-			/* use the main thread's ID as invalid value for the new thread */
-			fabric_priv->name_server_thread = pthread_self();
-		}
-	}
-
-	psmx_query_mpi();
-
-	fabric_priv->refcnt = 1;
-	*fabric = &fabric_priv->fabric;
-	psmx_active_fabric = fabric_priv;
-
-	return 0;
 }
 
 static void psmx_fini(void)
@@ -657,6 +564,10 @@ PROVIDER_INI
 	fi_param_define(&psmx_prov, "timeout", FI_PARAM_INT,
 			"Timeout (seconds) for gracefully closing the PSM endpoint");
 
+	fi_param_define(&psmx_prov, "prog_thread", FI_PARAM_BOOL,
+			"Whether to allow the creation of progress thread or not "
+			"(default: yes)");
+
 	fi_param_define(&psmx_prov, "prog_interval", FI_PARAM_INT,
 			"Interval (microseconds) between progress calls made in the "
 			"progress thread (default: 1 if affinity is set, 1000 if not)");
@@ -687,12 +598,14 @@ PROVIDER_INI
 	FI_INFO(&psmx_prov, FI_LOG_CORE,
 		"PSM library version = (%d, %d)\n", major, minor);
 
+#if (PSM_VERNO_MAJOR == 1)
 	if (major != PSM_VERNO_MAJOR) {
-		FI_WARN(&psmx_prov, FI_LOG_CORE,
-			"PSM version mismatch: header %d.%d, library %d.%d.\n",
+		psmx_am_compat_mode = 1;
+		FI_INFO(&psmx_prov, FI_LOG_CORE,
+			"PSM AM compat mode enabled: appliation %d.%d, library %d.%d.\n",
 			PSM_VERNO_MAJOR, PSM_VERNO_MINOR, major, minor);
-		return NULL;
 	}
+#endif
 
 	psmx_init_count++;
 	return (&psmx_prov);

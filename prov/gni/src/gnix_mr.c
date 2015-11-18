@@ -83,7 +83,14 @@ typedef struct gnix_mr_cache_entry {
 	struct gnix_nic *nic;
 	atomic_t ref_cnt;
 	struct dlist_entry lru_entry;
+	struct dlist_entry tree_entry;
+	struct dlist_entry global_entry;
+	struct dlist_entry overlap_entry;
 } gnix_mr_cache_entry_t;
+
+struct gnix_mr_rbt_entry {
+	struct dlist_entry list;
+};
 
 static struct fi_ops fi_gnix_mr_ops = {
 	.size = sizeof(struct fi_ops),
@@ -133,15 +140,16 @@ static inline int __mr_cache_key_comp(
 {
 	gnix_mr_cache_key_t *to_insert  = (gnix_mr_cache_key_t *) x;
 	gnix_mr_cache_key_t *to_compare = (gnix_mr_cache_key_t *) y;
-	uint64_t insert_end = to_insert->address + to_insert->length;
-	uint64_t compare_end = to_compare->address + to_compare->length;
 
-	/* if to_compare covers the range of to_insert, we'll call it a
-	 *   duplicate
-	 */
-	if (to_compare->address <= to_insert->address &&
-			insert_end <= compare_end)
-		return 0;
+	if (to_compare->address == to_insert->address) {
+		if (to_insert->length == to_compare->length)
+			return 0;
+
+		if (to_insert->length < to_compare->length)
+			return -1;
+
+		return 1;
+	}
 
 	/* to the left */
 	if (to_insert->address < to_compare->address)
@@ -390,6 +398,21 @@ uint64_t _gnix_convert_mhdl_to_key(gni_mem_handle_t *mhdl)
 	return key.value;
 }
 
+static inline uint64_t __calculate_length(
+		uint64_t address,
+		uint64_t length,
+		uint64_t pagesize)
+{
+	uint64_t baseaddr = address & ~(pagesize - 1);
+	uint64_t reg_len = (address + length) - baseaddr;
+	uint64_t pages = reg_len / pagesize;
+
+	if (reg_len % pagesize != 0)
+		pages += 1;
+
+	return pages * pagesize;
+}
+
 int gnix_mr_reg(struct fid *fid, const void *buf, size_t len,
 		uint64_t access, uint64_t offset, uint64_t requested_key,
 		uint64_t flags, struct fid_mr **mr_o, void *context)
@@ -399,6 +422,7 @@ int gnix_mr_reg(struct fid *fid, const void *buf, size_t len,
 	struct gnix_fid_domain *domain;
 	struct gnix_nic *nic;
 	int rc;
+	uint64_t reg_addr, reg_len;
 
 	GNIX_TRACE(FI_LOG_MR, "\n");
 
@@ -440,6 +464,10 @@ int gnix_mr_reg(struct fid *fid, const void *buf, size_t len,
 		}
 	}
 
+	reg_addr = ((uint64_t) buf) & ~((1 << GNIX_MR_PAGE_SHIFT) - 1);
+	reg_len = __calculate_length((uint64_t) buf, len,
+			1 << GNIX_MR_PAGE_SHIFT);
+
 	/* call cache register op to retrieve the right entry */
 	fastlock_acquire(&domain->mr_cache_lock);
 	if (unlikely(!domain->mr_cache)) {
@@ -451,8 +479,9 @@ int gnix_mr_reg(struct fid *fid, const void *buf, size_t len,
 		}
 	}
 
-	rc = __mr_cache_register(domain->mr_cache, mr, domain, (uint64_t) buf,
-			len, NULL, fi_gnix_access, -1, &mr->mem_hndl);
+	rc = __mr_cache_register(domain->mr_cache, mr, domain,
+			(uint64_t) reg_addr, reg_len, NULL,
+			fi_gnix_access, -1, &mr->mem_hndl);
 	fastlock_release(&domain->mr_cache_lock);
 
 	/* check retcode */
@@ -742,6 +771,184 @@ int _gnix_mr_cache_flush(gnix_mr_cache_t *cache)
 	return FI_SUCCESS;
 }
 
+static int __mr_cache_lookup_inuse_fastpath(
+		gnix_mr_cache_t *cache,
+		gnix_mr_cache_key_t *key,
+		gnix_mr_cache_entry_t **entry)
+{
+	RbtIterator iter;
+	int ret = -FI_ENOENT;
+	gnix_mr_cache_key_t *e_key;
+
+	*entry = NULL;
+
+	/* Is the key in the inuse tree? */
+	iter = rbtFind(cache->inuse, key);
+	if (iter) {
+		/* let's find a matching element */
+		rbtKeyValue(cache->inuse, iter, (void **) &e_key,
+				(void **) entry);
+
+		__mr_cache_entry_get(cache, *entry);
+
+		GNIX_INFO(FI_LOG_MR, "Using existing MR\n");
+		/* Done, go to the end */
+		ret = FI_SUCCESS;
+	}
+
+	return ret;
+}
+
+static int __mr_cache_lookup_stale_fastpath(
+		gnix_mr_cache_t *cache,
+		gnix_mr_cache_key_t *key,
+		gnix_mr_cache_entry_t **entry)
+{
+	RbtStatus rc;
+	RbtIterator iter;
+	int ret = -FI_ENOENT;
+	gnix_mr_cache_key_t *e_key;
+	gnix_mr_cache_entry_t *current_entry;
+
+	/* initialize to NULL */
+	*entry = NULL;
+
+	iter = rbtFind(cache->stale, key);
+	if (iter) {
+		rbtKeyValue(cache->stale, iter, (void **) &e_key,
+				(void **) &current_entry);
+
+		atomic_set(&current_entry->ref_cnt, 1);
+
+		/* clear the element from the stale cache */
+		rbtErase(cache->stale, iter);
+		atomic_dec(&cache->stale_elements);
+
+		dlist_remove(&current_entry->lru_entry);
+
+		GNIX_INFO(FI_LOG_MR,
+				"moving key %llu:%llu from stale into inuse\n",
+				current_entry->key.address,
+				current_entry->key.length);
+
+		rc = rbtInsert(cache->inuse, &current_entry->key,
+				current_entry);
+		if (rc != RBT_STATUS_OK) {
+			GNIX_WARN(FI_LOG_MR, "failed to insert stale entry "
+					"into inuse cache, rc=%d", rc);
+
+			__mr_cache_entry_destroy(current_entry);
+			*entry = NULL;
+			ret = FI_ENOSPC;
+		} else {
+			atomic_inc(&cache->inuse_elements);
+			*entry = current_entry;
+			ret = FI_SUCCESS;
+		}
+	}
+
+	return ret;
+}
+
+static int __mr_cache_lookup_inuse_slowpath(
+		gnix_mr_cache_t *cache,
+		gnix_mr_cache_key_t *key,
+		gnix_mr_cache_entry_t **entry)
+{
+	int ret = -FI_ENOENT;
+
+	return ret;
+}
+
+static int __mr_cache_lookup_stale_slowpath(
+		gnix_mr_cache_t *cache,
+		gnix_mr_cache_key_t *key,
+		gnix_mr_cache_entry_t **entry)
+{
+	int ret = -FI_ENOENT;
+
+	return ret;
+}
+
+static int __mr_cache_create_registration(
+		gnix_mr_cache_t          *cache,
+		struct gnix_fid_mem_desc *mr,
+		struct gnix_fid_domain   *domain,
+		uint64_t                 address,
+		uint64_t                 length,
+		gni_cq_handle_t          dst_cq_hndl,
+		uint32_t                 flags,
+		uint32_t                 vmdh_index,
+		gni_mem_handle_t         *mem_hndl,
+		gnix_mr_cache_entry_t    **entry)
+{
+	int rc;
+	struct gnix_nic *nic;
+	gni_return_t grc = GNI_RC_SUCCESS;
+	gnix_mr_cache_entry_t    *current_entry;
+
+	/* if we made it here, we didn't find the entry at all */
+	current_entry = calloc(1, sizeof(*current_entry));
+	if (!current_entry)
+		return -FI_ENOMEM;
+
+	/* NOTE: Can we assume the list is safe for access without a lock? */
+	dlist_for_each(&domain->nic_list, nic, dom_nic_list)
+	{
+		fastlock_acquire(&nic->lock);
+		grc = GNI_MemRegister(nic->gni_nic_hndl, address, length,
+					dst_cq_hndl, flags,
+					vmdh_index, &current_entry->mem_hndl);
+		fastlock_release(&nic->lock);
+		if (grc == GNI_RC_SUCCESS)
+			break;
+	}
+
+	if (unlikely(grc != GNI_RC_SUCCESS)) {
+		free(current_entry);
+		GNIX_INFO(FI_LOG_MR, "failed to register memory with uGNI, "
+				"ret=%s", gni_err_str[grc]);
+		return -gnixu_to_fi_errno(grc);
+	}
+
+	/* set up the entry's key */
+	current_entry->key.address = address;
+	current_entry->key.length = length;
+
+	GNIX_INFO(FI_LOG_MR, "inserting key %llu:%llu into inuse\n",
+			current_entry->key.address, current_entry->key.length);
+	rc = rbtInsert(cache->inuse, &current_entry->key, current_entry);
+	if (unlikely(rc != RBT_STATUS_OK)) {
+		GNIX_INFO(FI_LOG_MR, "failed to insert registration "
+				"into cache, ret=%i", rc);
+
+		fastlock_acquire(&nic->lock);
+		grc = GNI_MemDeregister(nic->gni_nic_hndl,
+				&current_entry->mem_hndl);
+		fastlock_release(&nic->lock);
+		if (unlikely(grc != GNI_RC_SUCCESS)) {
+			GNIX_INFO(FI_LOG_MR, "failed to deregister memory with "
+					"uGNI, ret=%s", gni_err_str[grc]);
+		}
+
+		free(current_entry);
+		return -FI_ENOMEM;
+	}
+
+	atomic_inc(&cache->inuse_elements);
+	atomic_initialize(&current_entry->ref_cnt, 1);
+	current_entry->domain = domain;
+	current_entry->nic = nic;
+
+	/* take references on domain and nic */
+	_gnix_ref_get(current_entry->domain);
+	_gnix_ref_get(current_entry->nic);
+
+	*entry = current_entry;
+
+	return FI_SUCCESS;
+}
+
 /**
  * Function to register memory with the cache
  *
@@ -766,12 +973,9 @@ static int __mr_cache_register(
 		uint32_t                 vmdh_index,
 		gni_mem_handle_t         *mem_hndl)
 {
-	RbtStatus rc;
-	RbtIterator iter;
-	gnix_mr_cache_key_t key, *e_key;
+	int ret;
+	gnix_mr_cache_key_t key;
 	gnix_mr_cache_entry_t *entry;
-	struct gnix_nic *nic;
-	gni_return_t grc = GNI_RC_SUCCESS;
 
 	GNIX_TRACE(FI_LOG_MR, "\n");
 
@@ -779,20 +983,10 @@ static int __mr_cache_register(
 	key.address = address;
 	key.length = length;
 
-	/* Is the key in the inuse tree? */
-	iter = rbtFind(cache->inuse, &key);
-	if (iter) {
-		/* Let's increment the ref count of the entry */
-		rbtKeyValue(cache->inuse, iter, (void **) &e_key,
-				(void **) &entry);
-
-		__mr_cache_entry_get(cache, entry);
-
-		GNIX_INFO(FI_LOG_MR, "Using existing MR\n");
-
-		/* Done, go to the end */
+	/* fastpath inuse */
+	ret = __mr_cache_lookup_inuse_fastpath(cache, &key, &entry);
+	if (ret == FI_SUCCESS)
 		goto success;
-	}
 
 	/* if we shouldn't introduce any new elements, return -FI_ENOSPC */
 	if (unlikely(cache->attr.hard_reg_limit > 0 &&
@@ -804,105 +998,36 @@ static int __mr_cache_register(
 		/* if lazy deregistration is in use, we can check the
 		 *   stale tree
 		 */
-		iter = rbtFind(cache->stale, &key);
-		if (iter) {
-			rbtKeyValue(cache->stale, iter, (void **) &e_key,
-					(void **) &entry);
-
-			/* reset the reference count as it should be zero from
-			 *   being in the stale tree anyway
-			 */
-			atomic_set(&entry->ref_cnt, 1);
-
-			/* clear the element from the stale cache */
-			rbtErase(cache->stale, iter);
-			atomic_dec(&cache->stale_elements);
-
-			dlist_remove(&entry->lru_entry);
-
-			GNIX_INFO(FI_LOG_MR,
-					"moving key %llu:%llu from stale into inuse\n",
-					entry->key.address, entry->key.length);
-			rc = rbtInsert(cache->inuse, (void *) &entry->key,
-					(void *) entry);
-			if (unlikely(rc == RBT_STATUS_MEM_EXHAUSTED)) {
-				__mr_cache_entry_destroy(entry);
-				return -FI_ENOMEM;
-			} else if (unlikely(rc != RBT_STATUS_OK)) {
-				GNIX_WARN(FI_LOG_MR, "unexpected error condition "
-						"during cache insert, ret=%i\n", rc);
-			}
-
-			atomic_inc(&cache->inuse_elements);
-
+		ret = __mr_cache_lookup_stale_fastpath(cache, &key, &entry);
+		if (ret == FI_SUCCESS)
 			goto success;
-		}
+	}
+
+	/* slow path inuse */
+	ret = __mr_cache_lookup_inuse_slowpath(cache, &key, &entry);
+	if (ret == FI_SUCCESS)
+		goto success;
+
+	/* slow path stale */
+	if (cache->attr.lazy_deregistration) {
+		ret = __mr_cache_lookup_stale_slowpath(cache, &key, &entry);
+		if (ret == FI_SUCCESS)
+			goto success;
 	}
 
 	/* If the cache is full, then flush one of the stale entries to make
 	 *   room for the new entry. This works because we check above to see if
 	 *   the number of inuse entries exceeds the hard reg limit
 	 */
-	if ((atomic_get(&cache->inuse_elements) + 
+	if ((atomic_get(&cache->inuse_elements) +
 			atomic_get(&cache->stale_elements)) == cache->attr.hard_reg_limit)
 		__mr_cache_flush(cache, 1);
 
-	/* if we made it here, we didn't find the entry at all */
-	entry = calloc(1, sizeof(*entry));
-	if (!entry)
-		return -FI_ENOMEM;
-
-	/* TODO: should we just try the first nic we find? */
-	/* NOTE: Can we assume thie list is safe for access without a lock? */
-	dlist_for_each(&domain->nic_list, nic, dom_nic_list)
-	{
-		fastlock_acquire(&nic->lock);
-		grc = GNI_MemRegister(nic->gni_nic_hndl, address, length,
-					dst_cq_hndl, flags,
-					vmdh_index, &entry->mem_hndl);
-		fastlock_release(&nic->lock);
-		if (grc == GNI_RC_SUCCESS)
-			break;
-	}
-
-	if (unlikely(grc != GNI_RC_SUCCESS)) {
-		free(entry);
-		GNIX_INFO(FI_LOG_MR, "failed to register memory with uGNI, "
-				"ret=%s", gni_err_str[grc]);
-		return -gnixu_to_fi_errno(grc);
-	}
-
-	/* set up the entry's key */
-	entry->key.address = address;
-	entry->key.length = length;
-
-	GNIX_INFO(FI_LOG_MR, "inserting key %llu:%llu into inuse\n",
-			entry->key.address, entry->key.length);
-	rc = rbtInsert(cache->inuse, &entry->key, entry);
-	if (unlikely(rc != RBT_STATUS_OK)) {
-		GNIX_INFO(FI_LOG_MR, "failed to insert registration "
-				"into cache, ret=%i", rc);
-
-		fastlock_acquire(&nic->lock);
-		grc = GNI_MemDeregister(nic->gni_nic_hndl, &entry->mem_hndl);
-		fastlock_release(&nic->lock);
-		if (unlikely(grc != GNI_RC_SUCCESS)) {
-			GNIX_INFO(FI_LOG_MR, "failed to deregister memory with "
-					"uGNI, ret=%s", gni_err_str[grc]);
-		}
-
-		free(entry);
-		return -FI_ENOMEM;
-	}
-
-	atomic_inc(&cache->inuse_elements);
-	atomic_initialize(&entry->ref_cnt, 1);
-	entry->domain = domain;
-	entry->nic = nic;
-
-	/* take references on domain and nic */
-	_gnix_ref_get(entry->domain);
-	_gnix_ref_get(entry->nic);
+	ret = __mr_cache_create_registration(cache, mr, domain,
+			address, length, dst_cq_hndl, flags,
+			vmdh_index, mem_hndl, &entry);
+	if (ret)
+		return ret;
 
 success:
 	mr->nic = entry->nic;

@@ -13,10 +13,27 @@ v1.2.0, TBD
 - Added PSM2 provider
 
 ## PSM provider notes
+- General bug fixes
+- Support auto progress mode
+- Support more threading modes
+- Only set FI_CONTEXT mode if FI_TAGGED or FI_MSG is used
+- Support Intel Omni-Path Fabric via the psm2-compat library
 
 ## PSM2 provider notes
+- Initial addition
 
 ## Sockets provider notes
+
+- General bug fixes and code cleanup
+- Increase buffered receive limit
+- Ignore FI_INJECT flag for atomic read operation
+- Return -FI_EINVAL instead of -FI_ENODATA for fi_endpoint for invalid attributes
+- Set default tag format to FI_TAG_GENERIC
+- Set src/dest iov len correctly for readv operations
+- Fix random crashes while closing shared contexts
+- Fix an out of bound access when large multi-recv limit is specified by user
+- Reset tag field in CQ entry for send completion
+- Do not set prov_name in fabric_attr
 
 ## usNIC provider notes
 
@@ -52,7 +69,7 @@ v1.1.1, TBD
 - Add retry for connection timeout
 - Release av resources in the error path
 - Remove separate read/write CQ to be consistent with the man page
-- Increase default connection map size and added environment variable to specify 
+- Increase default connection map size and added environment variable to specify
   AV, CQ, EQ and connection map size to run large scale tests
 - Fix FI_PEEK operation to be consistent with the man page
 - Fix remote write event not to generate CQ event

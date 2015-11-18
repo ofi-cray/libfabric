@@ -655,7 +655,9 @@ field to all 0 or all 1.  When negotiating tag fields, an application
 can request a specific number of fields of a given size.  A provider
 must return a tag format that supports the requested number of fields,
 with each field being at least the size requested, or fail the
-request.  A provider may increase the size of the fields.
+request.  A provider may increase the size of the fields. When reporting
+completions (see FI_CQ_FORMAT_TAGGED), the provider must provide the 
+exact value of the recieved tag, clearing out any unsupported tag bits. 
 
 It is recommended that field sizes be ordered from smallest to
 largest.  A generic, unstructured tag and mask can be achieved by
@@ -1180,11 +1182,14 @@ Operations that complete in error that are not associated with valid
 operational context will use the endpoint context in any error
 reporting structures.
 
-Users can attach both counters and completion queues to an endpoint.
-When both counter and completion queue are attached, a successful
-completion increments the counter and does not generate a completion
-entry in the completion queue. Operations that complete with an error
-increment the error counter and generate a completion event.
+Although applications typically association individual completions with
+either completion queues or counters, an endpoint can be attached to
+both a counter and completion queue.  When combined with using
+selective completions, this allows an appliction to use counters to
+track successful completions, with a CQ used to report errors.
+Operations that complete with an error increment the error counter
+and generate a completion event.  The generation of entries going to
+the CQ can then be controlled using FI_SELECTIVE_COMPLETION.
 
 # RETURN VALUES
 

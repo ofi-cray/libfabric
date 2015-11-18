@@ -37,9 +37,7 @@
 extern "C" {
 #endif
 
-#if HAVE_CONFIG_H
-#include <config.h>
-#endif
+#include "config.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -68,16 +66,21 @@ extern "C" {
 #include "fi.h"
 #include "fi_enosys.h"
 #include "fi_list.h"
+#include "fi_indexer.h"
 #include "version.h"
 
 extern struct fi_provider psmx_prov;
+
+#if (PSM_VERNO_MAJOR == 1)
+extern int psmx_am_compat_mode;
+#endif
 
 #define PSMX_OP_FLAGS	(FI_INJECT | FI_MULTI_RECV | FI_COMPLETION | \
 			 FI_TRIGGER | FI_INJECT_COMPLETE | \
 			 FI_TRANSMIT_COMPLETE | FI_DELIVERY_COMPLETE)
 
 #if (PSM_VERNO_MAJOR >= 2)
-#define PSMX_CAP_EXT	(FI_REMOTE_CQ_DATA)
+#define PSMX_CAP_EXT	(FI_REMOTE_CQ_DATA | FI_SOURCE)
 #else
 #define PSMX_CAP_EXT	(0)
 #endif
@@ -98,8 +101,6 @@ extern struct fi_provider psmx_prov;
 
 #define PSMX_SUB_CAPS	(FI_READ | FI_WRITE | FI_REMOTE_READ | FI_REMOTE_WRITE | \
 			 FI_SEND | FI_RECV)
-
-#define PSMX_MODE	(FI_CONTEXT)
 
 #define PSMX_MAX_MSG_SIZE	((0x1ULL << 32) - 1)
 #define PSMX_INJECT_SIZE	(64)
@@ -277,7 +278,11 @@ struct psmx_fid_domain {
 	struct psmx_fid_ep	*atomics_ep;
 	uint64_t		mode;
 	uint64_t		caps;
+
 	enum fi_mr_mode		mr_mode;
+	fastlock_t		mr_lock;
+	uint64_t		mr_reserved_key;
+	struct index_map	mr_map;
 
 	int			am_initialized;
 
@@ -596,6 +601,7 @@ struct psmx_env {
 	char *uuid;
 	int delay;
 	int timeout;
+	int prog_thread;
 	int prog_interval;
 	char *prog_affinity;
 };
@@ -619,6 +625,8 @@ extern struct psm_am_parameters psmx_am_param;
 extern struct psmx_env		psmx_env;
 extern struct psmx_fid_fabric	*psmx_active_fabric;
 
+int	psmx_fabric(struct fi_fabric_attr *attr,
+		    struct fid_fabric **fabric, void *context);
 int	psmx_domain_open(struct fid_fabric *fabric, struct fi_info *info,
 			 struct fid_domain **domain, void *context);
 int	psmx_wait_open(struct fid_fabric *fabric, struct fi_wait_attr *attr,
@@ -638,6 +646,19 @@ int	psmx_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
 int	psmx_poll_open(struct fid_domain *domain, struct fi_poll_attr *attr,
 		       struct fid_poll **pollset);
 
+static inline void psmx_fabric_acquire(struct psmx_fid_fabric *fabric)
+{
+	++fabric->refcnt;
+}
+
+void	psmx_fabric_release(struct psmx_fid_fabric *fabric);
+
+static inline void psmx_domain_acquire(struct psmx_fid_domain *domain)
+{
+	++domain->refcnt;
+}
+
+void	psmx_domain_release(struct psmx_fid_domain *domain);
 int	psmx_domain_check_features(struct psmx_fid_domain *domain, int ep_cap);
 int	psmx_domain_enable_ep(struct psmx_fid_domain *domain, struct psmx_fid_ep *ep);
 void	psmx_domain_disable_ep(struct psmx_fid_domain *domain, struct psmx_fid_ep *ep);
@@ -698,7 +719,7 @@ void	psmx_atomic_fini(void);
 
 void	psmx_am_ack_rma(struct psmx_am_request *req);
 
-struct	psmx_fid_mr *psmx_mr_hash_get(uint64_t key);
+struct	psmx_fid_mr *psmx_mr_get(struct psmx_fid_domain *domain, uint64_t key);
 int	psmx_mr_validate(struct psmx_fid_mr *mr, uint64_t addr, size_t len, uint64_t access);
 void	psmx_cntr_check_trigger(struct psmx_fid_cntr *cntr);
 void	psmx_cntr_add_trigger(struct psmx_fid_cntr *cntr, struct psmx_trigger *trigger);

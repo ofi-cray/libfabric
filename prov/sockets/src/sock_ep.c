@@ -30,9 +30,7 @@
  * SOFTWARE.
  */
 
-#if HAVE_CONFIG_H
-#  include <config.h>
-#endif /* HAVE_CONFIG_H */
+#include "config.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -597,6 +595,7 @@ static int sock_ep_close(struct fid *fid)
 			atomic_dec(&sock_ep->av->ref);
 	}
 
+	pthread_mutex_lock(&sock_ep->domain->pe->list_lock);
 	if (sock_ep->tx_shared) {
 		fastlock_acquire(&sock_ep->tx_ctx->lock);
 		dlist_remove(&sock_ep->tx_ctx_entry);
@@ -608,6 +607,7 @@ static int sock_ep_close(struct fid *fid)
 		dlist_remove(&sock_ep->rx_ctx_entry);
 		fastlock_release(&sock_ep->rx_ctx->lock);
 	}
+	pthread_mutex_unlock(&sock_ep->domain->pe->list_lock);
 
 	sock_ep->listener.do_listen = 0;
 	if (write(sock_ep->listener.signal_fds[0], &c, 1) != 1)

@@ -19,7 +19,7 @@ support for common atomic operations and optimized collectives.
 
 # REQUIREMENTS
 
-The GNI provider run on Cray XC systems running CLE 5.2 UP02 or higher
+The GNI provider runs on Cray XC systems running CLE 5.2 UP02 or higher
 using gcc version 4.9 or higher.
 
 # SUPPORTED FEATURES
@@ -39,7 +39,7 @@ libfabric API:
   endpoint types: *fi_atomic*, *fi_msg*, *fi_rma*, *fi_tagged*.
 
 *Completion events*
-: The proveders supports *FI_CQ_FORMAT_CONTEXT*, *FI_CQ_FORMAT_MSG*,
+: The GNI provider supports *FI_CQ_FORMAT_CONTEXT*, *FI_CQ_FORMAT_MSG*,
   *FI_CQ_FORMAT_DATA* and *FI_CQ_FORMAT_TAGGED* with wait objects of type
   *FI_WAIT_NONE*, *FI_WAIT_FD*, and *FI_WAIT_MUTEX_COND*.
 
@@ -93,7 +93,7 @@ values are:
 
 *GNI_CONN_TABLE_STEP_SIZE*
 : Step size for increasing the size of the internal table data
-  structure used to manage connections.
+  structure used to manage internal  GNI connections.
 
 *GNI_VC_ID_TABLE_CAPACITY*
 : Size of the virtual channel (VC) table used for managing remote

@@ -51,6 +51,11 @@
 #define GNIX_AV_ENTRY_VALID		(1ULL)
 #define GNIX_AV_ENTRY_CM_NIC_ID		(1ULL << 2)
 
+struct gnix_av_block {
+	struct slist_entry        slist;
+	struct gnix_av_addr_entry *base;
+};
+
 /*******************************************************************************
  * Forward declarations of ops structures.
  ******************************************************************************/
@@ -233,10 +238,7 @@ static int table_lookup(struct gnix_fid_av *int_av, fi_addr_t fi_addr,
 /*******************************************************************************
  * FI_AV_MAP specific implementations.
  ******************************************************************************/
-/*
- * TODO:
- * Store inserted address in some data structure.
- */
+
 static int map_insert(struct gnix_fid_av *int_av, const void *addr,
 		      size_t count, fi_addr_t *fi_addr, uint64_t flags,
 		      void *context)
@@ -246,19 +248,29 @@ static int map_insert(struct gnix_fid_av *int_av, const void *addr,
 	struct gnix_av_addr_entry *the_entry;
 	gnix_ht_key_t key;
 	size_t i;
+	struct gnix_av_block *blk = NULL;
 
 	assert(int_av->map_ht != NULL);
 
-	/*
- 	 * TODO: ugh, something better than malloc for each
- 	 * little element here.
- 	 */
+	if (count == 0)
+		return 0;
+
+	blk = calloc(1, sizeof(struct gnix_av_block));
+	if (blk == NULL)
+		return -FI_ENOMEM;
+
+	blk->base =  calloc(count, sizeof(struct gnix_av_addr_entry));
+	if (blk->base == NULL) {
+		free(blk);
+		return -FI_ENOMEM;
+	}
+
+	slist_insert_tail(&blk->slist, &int_av->block_list);
+
 	for (i = 0; i < count; i++) {
 		temp = &((struct gnix_ep_name *)addr)[i];
 		((struct gnix_address *)fi_addr)[i] = temp->gnix_addr;
-		the_entry =  calloc(1, sizeof(*the_entry));
-		if (the_entry == NULL)
-			return -FI_ENOMEM;
+		the_entry =  &blk->base[i];
 		memcpy(&the_entry->gnix_addr, &temp->gnix_addr,
 		       sizeof(struct gnix_address));
 		the_entry->name_type = temp->name_type;
@@ -285,7 +297,9 @@ static int map_insert(struct gnix_fid_av *int_av, const void *addr,
 }
 
 /*
- * TODO: Actually implement once the address is being stored.
+ * TODO: slab should be freed when entries in the slab drop to zero,
+ * or as an alternative, have a free list for slabs so they can be
+ * reused if new fi_av_insert operations are performed.
  */
 static int map_remove(struct gnix_fid_av *int_av, fi_addr_t *fi_addr,
 		      size_t count, uint64_t flags)
@@ -308,8 +322,6 @@ static int map_remove(struct gnix_fid_av *int_av, fi_addr_t *fi_addr,
 			return -FI_ENOENT;
 
 		ret = _gnix_ht_remove(int_av->map_ht, key);
-		if (ret == FI_SUCCESS)
-			free(the_entry);
 
 	}
 
@@ -514,17 +526,30 @@ static void __av_destruct(void *obj)
 {
 	int ret;
 	struct gnix_fid_av *av = (struct gnix_fid_av *) obj;
+	struct slist_entry *blk_entry;
+	struct gnix_av_block *temp;
+
 
 	if (av->type == FI_AV_TABLE) {
 		if (av->table) {
 			free(av->table);
 		}
 	} else if (av->type == FI_AV_MAP) {
+
+		while (!slist_empty(&av->block_list)) {
+			blk_entry = slist_remove_head(&av->block_list);
+			temp = container_of(blk_entry,
+					struct gnix_av_block, slist);
+			free(temp->base);
+			free(temp);
+		}
+
 		ret = _gnix_ht_destroy(av->map_ht);
 		if (ret != FI_SUCCESS)
 			GNIX_WARN(FI_LOG_AV,
 				  "_gnix_ht_destroy failed %d\n",
 				  ret);
+		free(av->map_ht);
 	}
 	if (av->valid_entry_vec) {
 		free(av->valid_entry_vec);
@@ -535,9 +560,6 @@ static void __av_destruct(void *obj)
 	free(av);
 }
 
-/*
- * TODO: Free memory for data structures when FI_AV_MAP is fully supported.
- */
 static int gnix_av_close(fid_t fid)
 {
 	struct gnix_fid_av *av = NULL;
@@ -648,9 +670,11 @@ int gnix_av_open(struct fid_domain *domain, struct fi_av_attr *attr,
 		ht_attr.ht_collision_thresh = 500;
 		ht_attr.ht_hash_seed = 0xdeadbeefbeefdead;
 		ht_attr.ht_internal_locking = 1;
+		ht_attr.destructor = NULL;
 
 		ret = _gnix_ht_init(int_av->map_ht,
 				    &ht_attr);
+		 slist_init(&int_av->block_list);
 	}
 	_gnix_ref_init(&int_av->ref_cnt, 1, __av_destruct);
 

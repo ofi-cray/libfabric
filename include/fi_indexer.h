@@ -34,9 +34,7 @@
 #if !defined(INDEXER_H)
 #define INDEXER_H
 
-#if HAVE_CONFIG_H
-#  include <config.h>
-#endif /* HAVE_CONFIG_H */
+#include "config.h"
 
 #include <sys/types.h>
 
@@ -70,6 +68,7 @@ struct indexer
 int idx_insert(struct indexer *idx, void *item);
 void *idx_remove(struct indexer *idx, int index);
 void idx_replace(struct indexer *idx, int index, void *item);
+void idx_reset(struct indexer *idx);
 
 static inline void *idx_at(struct indexer *idx, int index)
 {
@@ -90,6 +89,7 @@ struct index_map
 
 int idm_set(struct index_map *idm, int index, void *item);
 void *idm_clear(struct index_map *idm, int index);
+void idm_reset(struct index_map *idm);
 
 static inline void *idm_at(struct index_map *idm, int index)
 {

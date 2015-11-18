@@ -1,6 +1,5 @@
 # Makefile.am for libfabric
 
-
 AM_CPPFLAGS = \
 	-I$(srcdir)/include \
 	-D_GNU_SOURCE \
@@ -30,13 +29,19 @@ rdmainclude_HEADERS =
 # internal utility functions shared by in-tree providers:
 common_srcs = \
 	src/common.c \
-	src/enosys.c
+	src/enosys.c \
+	src/rbtree.c \
+	src/fasthash.c
 
 # ensure dl-built providers link back to libfabric
 linkback = $(top_builddir)/src/libfabric.la
 
 bin_PROGRAMS = \
 	util/fi_info
+
+bin_SCRIPTS =
+
+nodist_DIR =
 
 util_fi_info_SOURCES = \
 	util/info.c
@@ -49,6 +54,8 @@ src_libfabric_la_SOURCES = \
 	include/fi_list.h \
 	include/fi_signal.h \
 	include/fi_rbuf.h \
+	include/rbtree.h \
+	include/fasthash.h \
 	include/prov.h \
 	src/fabric.c \
 	src/fi_tostr.c \
@@ -111,7 +118,31 @@ endif !HAVE_SOCKETS_DL
 endif HAVE_SOCKETS
 
 if HAVE_VERBS
-_verbs_files = prov/verbs/src/fi_verbs.c
+_verbs_files = \
+	prov/verbs/src/fi_verbs.h \
+	prov/verbs/src/fi_verbs.c \
+	prov/verbs/src/uthash.h \
+	prov/verbs/src/verbs_atomic.c \
+	prov/verbs/src/verbs_av.c \
+	prov/verbs/src/verbs_cm.c \
+	prov/verbs/src/verbs_cq.c \
+	prov/verbs/src/verbs_domain.c \
+	prov/verbs/src/verbs_eq.c \
+	prov/verbs/src/verbs_info.c \
+	prov/verbs/src/verbs_msg.c \
+	prov/verbs/src/verbs_msg_ep.c \
+	prov/verbs/src/verbs_rma.c \
+	prov/verbs/src/ep_rdm/verbs_av_ep_rdm.c \
+	prov/verbs/src/ep_rdm/verbs_cq_ep_rdm.c \
+	prov/verbs/src/ep_rdm/verbs_ep_rdm.c \
+	prov/verbs/src/ep_rdm/verbs_queuing.h \
+	prov/verbs/src/ep_rdm/verbs_rdm_cm.c \
+	prov/verbs/src/ep_rdm/verbs_rdm.h \
+	prov/verbs/src/ep_rdm/verbs_tagged_ep_rdm_states.h \
+	prov/verbs/src/ep_rdm/verbs_tagged_ep_rdm_states.c \
+	prov/verbs/src/ep_rdm/verbs_tagged_ep_rdm.c \
+	prov/verbs/src/ep_rdm/verbs_utils.c \
+	prov/verbs/src/ep_rdm/verbs_utils.h
 
 if HAVE_VERBS_DL
 pkglib_LTLIBRARIES += libverbs-fi.la
@@ -272,6 +303,7 @@ _psm_files = \
 	prov/psm/src/psm_am.h \
 	prov/psm/src/psmx.h \
 	prov/psm/src/psmx_init.c \
+	prov/psm/src/psmx_fabric.c \
 	prov/psm/src/psmx_domain.c \
 	prov/psm/src/psmx_cq.c \
 	prov/psm/src/psmx_eq.c \
@@ -316,6 +348,7 @@ _psm2_files = \
 	prov/psm2/src/version.h \
 	prov/psm2/src/psmx.h \
 	prov/psm2/src/psmx_init.c \
+	prov/psm2/src/psmx_fabric.c \
 	prov/psm2/src/psmx_domain.c \
 	prov/psm2/src/psmx_cq.c \
 	prov/psm2/src/psmx_eq.c \
@@ -427,7 +460,7 @@ real_man_pages = \
         man/man3/fi_version.3 \
         man/man7/fabric.7 \
         man/man7/fi_provider.7 \
-	man/man7/fi_gni.7 \
+        man/man7/fi_gni.7 \
         man/man7/fi_psm.7 \
         man/man7/fi_sockets.7 \
         man/man7/fi_usnic.7 \

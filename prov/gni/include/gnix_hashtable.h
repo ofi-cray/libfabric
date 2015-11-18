@@ -94,6 +94,9 @@ enum gnix_ht_increase {
  *                           results.
  * @var ht_internal_locking  if non-zero, uses a version of the hash table with
  *                           internal locking implemented
+ *
+ * @var destructor           if non-NULL, will be called with value when
+ *                           destroying the hash table
  */
 typedef struct gnix_hashtable_attr {
 	int ht_initial_size;
@@ -103,9 +106,11 @@ typedef struct gnix_hashtable_attr {
 	int ht_collision_thresh;
 	uint64_t ht_hash_seed;
 	int ht_internal_locking;
+	void  (*destructor)(void *);
 } gnix_hashtable_attr_t;
 
 struct gnix_hashtable;
+struct gnix_hashtable_iter;
 
 typedef struct gnix_hashtable_ops {
 	int   (*init)(struct gnix_hashtable *);
@@ -115,6 +120,7 @@ typedef struct gnix_hashtable_ops {
 	void *(*lookup)(struct gnix_hashtable *, gnix_ht_key_t);
 	int   (*resize)(struct gnix_hashtable *, int, int);
 	struct dlist_entry *(*retrieve_list)(struct gnix_hashtable *, int bucket);
+	void *(*iter_next)(struct gnix_hashtable_iter *);
 } gnix_hashtable_ops_t;
 
 /**
@@ -146,6 +152,19 @@ typedef struct gnix_hashtable {
 		gnix_ht_lk_lh_t *ht_lk_tbl;
 	};
 } gnix_hashtable_t;
+
+struct gnix_hashtable_iter {
+	struct gnix_hashtable *ht;
+	int cur_idx;
+	struct dlist_entry *cur_entry;
+};
+
+#define GNIX_HASHTABLE_ITERATOR(_ht, _iter)	\
+	struct gnix_hashtable_iter _iter = {	\
+		.ht = (_ht),			\
+		.cur_idx = 0,			\
+		.cur_entry = NULL		\
+	}
 
 /**
  * Initializes the hash table with provided attributes, if any
@@ -206,5 +225,23 @@ void *_gnix_ht_lookup(gnix_hashtable_t *ht, gnix_ht_key_t key);
  * @return        true if the hash table is empty, false if not
  */
 int _gnix_ht_empty(gnix_hashtable_t *ht);
+
+/**
+ * Return next element in the hashtable
+ *
+ * @param iter    pointer to the hashtable iterator
+ * @return        pointer to next element in the hashtable
+ */
+void *_gnix_ht_iterator_next(struct gnix_hashtable_iter *iter);
+
+/* Hastable iteration macros */
+#define ht_lf_for_each(ht, ht_entry)				\
+	dlist_for_each(ht->ht_lf_tbl->head, ht_entry, entry)	\
+
+#define ht_lk_for_each(ht, ht_entry)				\
+	dlist_for_each(ht.ht_lk_tbl->head, ht_entry, entry)
+
+#define ht_entry_value(ht_entry)		\
+	ht_entry->value
 
 #endif /* GNIX_HASHTABLE_H_ */

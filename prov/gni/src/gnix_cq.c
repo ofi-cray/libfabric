@@ -249,6 +249,8 @@ err:
 	return NULL;
 }
 
+extern int _gnix_cm_nic_progress(struct gnix_cm_nic *cm_nic);
+
 static int __gnix_cq_progress(struct gnix_fid_cq *cq)
 {
 	struct gnix_cq_poll_nic *pnic, *tmp;
@@ -265,6 +267,15 @@ static int __gnix_cq_progress(struct gnix_fid_cq *cq)
 	}
 
 	rwlock_unlock(&cq->nic_lock);
+
+	if (unlikely(cq->domain->control_progress != FI_PROGRESS_AUTO)) {
+		if (cq->domain->cm_nic != NULL) {
+			rc = _gnix_cm_nic_progress(cq->domain->cm_nic);
+			if (rc)
+				GNIX_WARN(FI_LOG_CQ,
+				  "_gnix_cm_nic_progress returned: %d\n", rc);
+		}
+	}
 
 	return FI_SUCCESS;
 }

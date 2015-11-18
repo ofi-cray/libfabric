@@ -84,7 +84,6 @@ const struct fi_fabric_attr gnix_fabric_attr = {
 static struct fi_ops_fabric gnix_fab_ops = {
 	.size = sizeof(struct fi_ops_fabric),
 	.domain = gnix_domain_open,
-	/* TODO: need to define for FI_EP_MSG */
 	.passive_ep = fi_no_passive_ep,
 	.eq_open = gnix_eq_open,
 	.wait_open = gnix_wait_open
@@ -290,7 +289,6 @@ static int gnix_getinfo(uint32_t version, const char *node, const char *service,
 			goto err;
 		}
 
-		/* TODO: use hardwared kgni const string */
 		if (hints->domain_attr) {
 			if (hints->domain_attr->name &&
 			    strncmp(hints->domain_attr->name, gnix_dom_name,
@@ -345,7 +343,6 @@ static int gnix_getinfo(uint32_t version, const char *node, const char *service,
 	gnix_info->ep_attr->max_msg_size = GNIX_MAX_MSG_SIZE;
 	/* TODO: need to work on this */
 	gnix_info->ep_attr->mem_tag_format = 0x0;
-	/* TODO: remember this when implementing sends */
 	gnix_info->ep_attr->tx_ctx_cnt = 1;
 	gnix_info->ep_attr->rx_ctx_cnt = 1;
 

@@ -90,7 +90,7 @@ static int __gnix_rma_send_completion(struct gnix_fid_ep *ep,
 
 	if ((req->flags & FI_COMPLETION) && ep->send_cq) {
 		rc = _gnix_cq_add_event(ep->send_cq, req->user_context,
-					flags, 0, 0, 0, 0);
+					flags, 0, 0, 0, 0, FI_ADDR_NOTAVAIL);
 		if (rc) {
 			GNIX_WARN(FI_LOG_EP_DATA,
 				  "_gnix_cq_add_event() failed: %d\n", rc);
@@ -450,7 +450,6 @@ ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
 	req->rma.len = len;
 	req->rma.imm = data;
 	req->flags = flags;
-	req->tx_failures = 0;
 
 	if (req->flags & FI_INJECT) {
 		memcpy(req->inject_buf, (void *)loc_addr, len);

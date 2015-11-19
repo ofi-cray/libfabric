@@ -86,7 +86,7 @@ static int __gnix_amo_send_completion(struct gnix_fid_ep *ep,
 
 	if ((req->flags & FI_COMPLETION) && ep->send_cq) {
 		rc = _gnix_cq_add_event(ep->send_cq, req->user_context,
-					flags, 0, 0, 0, 0);
+					flags, 0, 0, 0, 0, FI_ADDR_NOTAVAIL);
 		if (rc) {
 			GNIX_WARN(FI_LOG_EP_DATA,
 				  "_gnix_cq_add_event() failed: %d\n", rc);
@@ -562,7 +562,6 @@ ssize_t _gnix_atomic(struct gnix_fid_ep *ep,
 	req->amo.datatype = msg->datatype;
 	req->amo.op = msg->op;
 	req->flags = flags;
-	req->tx_failures = 0;
 
 	/* Inject interfaces always suppress completions.  If
 	 * SELECTIVE_COMPLETION is set, honor any setting.  Otherwise, always

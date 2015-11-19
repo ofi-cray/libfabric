@@ -89,13 +89,14 @@ static int __recv_completion(
 		size_t len,
 		void *addr,
 		uint64_t data,
-		uint64_t tag)
+		uint64_t tag,
+		fi_addr_t src_addr)
 {
 	int rc;
 
 	if ((req->msg.recv_flags & FI_COMPLETION) && ep->recv_cq) {
 		rc = _gnix_cq_add_event(ep->recv_cq, context, flags, len,
-					addr, data, tag);
+					addr, data, tag, src_addr);
 		if (rc != FI_SUCCESS)  {
 			GNIX_WARN(FI_LOG_EP_DATA,
 					"_gnix_cq_add_event returned %d\n",
@@ -128,7 +129,8 @@ static inline int __gnix_recv_completion(struct gnix_fid_ep *ep,
 			req->msg.recv_len,
 			(void *)req->msg.recv_addr,
 			req->msg.imm,
-			req->msg.tag);
+			req->msg.tag,
+			_gnix_vc_peer_fi_addr(req->vc));
 }
 
 static int __gnix_send_err(struct gnix_fid_ep *ep, struct gnix_fab_req *req)
@@ -171,7 +173,7 @@ static int __gnix_send_completion(struct gnix_fid_ep *ep,
 	if ((req->msg.send_flags & FI_COMPLETION) && ep->send_cq) {
 		rc = _gnix_cq_add_event(ep->send_cq,
 				req->user_context,
-				flags, 0, 0, 0, 0);
+				flags, 0, 0, 0, 0, FI_ADDR_NOTAVAIL);
 		if (rc != FI_SUCCESS)  {
 			GNIX_WARN(FI_LOG_EP_DATA,
 					"_gnix_cq_add_event returned %d\n",
@@ -704,6 +706,7 @@ static int __smsg_rndzv_start(void *data, void *msg)
 		req->addr = vc->peer_addr;
 		req->gnix_ep = ep;
 		req->vc = vc;
+		req->tx_failures = 0;
 
 		req->msg.send_addr = hdr->addr;
 		req->msg.send_len = hdr->len;
@@ -829,7 +832,7 @@ static int __smsg_rma_data(void *data, void *msg)
 
 	if (ep->recv_cq) {
 		ret = _gnix_cq_add_event(ep->recv_cq, NULL, hdr->flags, 0,
-					 0, hdr->data, 0);
+					 0, hdr->data, 0, FI_ADDR_NOTAVAIL);
 		if (ret != FI_SUCCESS)  {
 			GNIX_WARN(FI_LOG_EP_DATA,
 					"_gnix_cq_add_event returned %d\n",
@@ -900,7 +903,8 @@ static int __gnix_peek_request(struct gnix_fid_ep *ep,
 
 	return __recv_completion(ep, req, context,
 				 GNIX_TAGGED_PCD_COMPLETION_FLAGS,
-				 len, peek_addr, req->msg.imm, tag);
+				 len, peek_addr, req->msg.imm, tag,
+				 _gnix_vc_peer_fi_addr(req->vc));
 }
 
 static int  __gnix_discard_request(struct gnix_fid_ep *ep,
@@ -948,7 +952,8 @@ static int  __gnix_discard_request(struct gnix_fid_ep *ep,
 		 */
 		ret = __recv_completion(ep, req, context,
 					GNIX_TAGGED_PCD_COMPLETION_FLAGS, len,
-					addr, req->msg.imm, tag);
+					addr, req->msg.imm, tag,
+					_gnix_vc_peer_fi_addr(req->vc));
 
 		/* data has already been delivered, so just discard it */
 		free((void *) req->msg.recv_addr);

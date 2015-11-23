@@ -337,10 +337,10 @@ static inline int __mr_cache_remove_stale_entry(
 	RbtIterator iter;
 	RbtStatus rc;
 
-	iter = rbtFind(cache->stale.rbt, &to_remove->key);
+	iter = rbtFind(cache->stale.rb_tree, &to_remove->key);
 	assert(iter);
 
-	rc = rbtErase(cache->stale.rbt, iter);
+	rc = rbtErase(cache->stale.rb_tree, iter);
 	assert(rc == RBT_STATUS_OK);
 
 	__mr_cache_remove_stale_entry_no_tree(cache, to_remove);
@@ -378,7 +378,7 @@ static inline int __mr_cache_stale_slowpath_insert_entry(
 			"entry=%p key.address=%llu key.length=%llu\n",
 			entry, entry->key.address, entry->key.length);
 
-	dlist_for_each_safe(&cache->stale.head, current, next, siblings) {
+	dlist_for_each_safe(&cache->stale.lcrs_tree, current, next, siblings) {
 		if (__can_subsume(&entry->key, &current->key)) {
 			/* if the entry can be subsumed, lets remove it from the LRU
 			 * and add this new entry. It is likely that more entries may
@@ -401,7 +401,7 @@ static inline int __mr_cache_stale_slowpath_insert_entry(
 	if (to_insert)
 		dlist_insert_before(&entry->siblings, to_insert);
 	else
-		dlist_insert_tail(&entry->siblings, &cache->stale.head);
+		dlist_insert_tail(&entry->siblings, &cache->stale.lcrs_tree);
 
 
 	return FI_SUCCESS;
@@ -464,13 +464,13 @@ static inline int __mr_cache_entry_put(
 		/* This entry is dead. It must be moved to the stale
 		 * list, if one exists
 		 */
-		rbtKeyValue(cache->inuse.rbt, iter, (void **) &key, (void **) &rbt_entry);
+		rbtKeyValue(cache->inuse.rb_tree, iter, (void **) &key, (void **) &rbt_entry);
 
 		dlist_remove(&entry->tree_entry);
 		if (dlist_empty(&rbt_entry->list)) {
 			GNIX_INFO(FI_LOG_MR, "removing empty list, rbt_entry=%p\n",
 					rbt_entry);
-			rbtErase(cache->inuse.rbt, iter);
+			rbtErase(cache->inuse.rb_tree, iter);
 			_gnix_sfe_free(&rbt_entry->free_list_entry,
 					&cache->rbtlist_free);
 		}
@@ -486,18 +486,18 @@ static inline int __mr_cache_entry_put(
 			GNIX_INFO(FI_LOG_MR, "moving key %llu:%llu to stale\n",
 					entry->key.address, entry->key.length);
 
-			found = rbtFind(cache->stale.rbt, &entry->key);
+			found = rbtFind(cache->stale.rb_tree, &entry->key);
 			if (found) {
 				/* we found another entry in the stale tree. Is this entry
 				 * larger? If so, lets replace the entry in the stale
 				 * tree.
 				 */
-				rbtKeyValue(cache->stale.rbt, found,
+				rbtKeyValue(cache->stale.rb_tree, found,
 						(void **) &c_key, (void **) &c_entry);
 
 				if (entry->key.length > c_entry->key.length) {
 					/* replace the entry */
-					rbtValueReplace(cache->stale.rbt, found, entry);
+					rbtValueReplace(cache->stale.rb_tree, found, entry);
 
 					/* replace the stale entry list with this entry */
 					dlist_insert_after(&entry->siblings,
@@ -527,7 +527,7 @@ static inline int __mr_cache_entry_put(
 					}
 				}
 			} else {
-				rc = rbtInsert(cache->stale.rbt, &entry->key, entry);
+				rc = rbtInsert(cache->stale.rb_tree, &entry->key, entry);
 				if (rc == RBT_STATUS_OK) {
 					__mr_cache_lru_enqueue(cache, entry);
 					atomic_inc(&cache->stale.elements);
@@ -567,7 +567,7 @@ static inline int __insert_inuse_entry_fp(
 
 	dlist_insert_head(&to_insert->tree_entry, &rbt_entry->list);
 
-	rc = rbtInsert(cache->inuse.rbt, &to_insert->key,
+	rc = rbtInsert(cache->inuse.rb_tree, &to_insert->key,
 			rbt_entry);
 	if (rc != RBT_STATUS_OK) {
 		GNIX_WARN(FI_LOG_MR, "failed to insert entry "
@@ -848,16 +848,16 @@ static int __gnix_mr_cache_init(
 	dlist_init(&cache_p->lru_head);
 
 	/* set up inuse tree */
-	cache_p->inuse.rbt = rbtNew(__mr_cache_key_comp);
-	if (!cache_p->inuse.rbt) {
+	cache_p->inuse.rb_tree = rbtNew(__mr_cache_key_comp);
+	if (!cache_p->inuse.rb_tree) {
 		rc = -FI_ENOMEM;
 		goto err_inuse;
 	}
 
 	/* if using lazy deregistration, set up stale tree */
 	if (cache_p->attr.lazy_deregistration) {
-		cache_p->stale.rbt = rbtNew(__mr_cache_key_comp);
-		if (!cache_p->stale.rbt) {
+		cache_p->stale.rb_tree = rbtNew(__mr_cache_key_comp);
+		if (!cache_p->stale.rb_tree) {
 			rc = -FI_ENOMEM;
 			goto err_stale;
 		}
@@ -871,8 +871,8 @@ static int __gnix_mr_cache_init(
 	}
 
 	/* initialize the slowpath heads */
-	dlist_init(&cache_p->inuse.head);
-	dlist_init(&cache_p->stale.head);
+	dlist_init(&cache_p->inuse.lcrs_tree);
+	dlist_init(&cache_p->stale.lcrs_tree);
 
 	/* initialize the element counts. If we are reinitializing a dead cache,
 	 *   destroy will have already set the element counts
@@ -889,12 +889,12 @@ static int __gnix_mr_cache_init(
 
 err_sfl_init:
 	if (cache_p->attr.lazy_deregistration) {
-		rbtDelete(cache_p->stale.rbt);
-		cache_p->stale.rbt = NULL;
+		rbtDelete(cache_p->stale.rb_tree);
+		cache_p->stale.rb_tree = NULL;
 	}
 err_stale:
-	rbtDelete(cache_p->inuse.rbt);
-	cache_p->inuse.rbt = NULL;
+	rbtDelete(cache_p->inuse.rb_tree);
+	cache_p->inuse.rb_tree = NULL;
 err_inuse:
 	free(cache_p);
 
@@ -923,13 +923,13 @@ int _gnix_mr_cache_destroy(gnix_mr_cache_t *cache)
 	}
 
 	/* destroy the tree */
-	rbtDelete(cache->inuse.rbt);
-	cache->inuse.rbt = NULL;
+	rbtDelete(cache->inuse.rb_tree);
+	cache->inuse.rb_tree = NULL;
 
 	/* stale will been flushed already, so just destroy the tree */
 	if (cache->attr.lazy_deregistration) {
-		rbtDelete(cache->stale.rbt);
-		cache->stale.rbt = NULL;
+		rbtDelete(cache->stale.rb_tree);
+		cache->stale.rb_tree = NULL;
 	}
 
 	_gnix_sfl_destroy(&cache->rbtlist_free);
@@ -969,7 +969,7 @@ int __mr_cache_flush(gnix_mr_cache_t *cache, int flush_count) {
 
 		GNIX_INFO(FI_LOG_MR, "attempting to flush key %llu:%llu\n",
 				entry->key.address, entry->key.length);
-		iter = rbtFind(cache->stale.rbt, &entry->key);
+		iter = rbtFind(cache->stale.rb_tree, &entry->key);
 		if (unlikely(!iter)) {
 			GNIX_ERR(FI_LOG_MR,
 					"lru entries MUST be present in the cache,"
@@ -977,7 +977,7 @@ int __mr_cache_flush(gnix_mr_cache_t *cache, int flush_count) {
 			break;
 		}
 
-		rbtKeyValue(cache->stale.rbt, iter, (void **) &e_key,
+		rbtKeyValue(cache->stale.rb_tree, iter, (void **) &e_key,
 			    (void **) &e_entry);
 		if (e_entry != entry) {
 			/* If not an exact match, remove the found entry,
@@ -995,7 +995,7 @@ int __mr_cache_flush(gnix_mr_cache_t *cache, int flush_count) {
 			entry = e_entry;
 		}
 
-		rc = rbtErase(cache->stale.rbt, iter);
+		rc = rbtErase(cache->stale.rb_tree, iter);
 		if (unlikely(rc != RBT_STATUS_OK)) {
 			GNIX_ERR(FI_LOG_MR,
 					"failed to erase lru entry from stale tree\n");
@@ -1045,10 +1045,10 @@ static int __mr_cache_lookup_inuse_fastpath(
 			"key.address=%llu key.length=%llu\n",
 			key->address, key->length);
 	/* Is the key in the inuse tree? */
-	iter = rbtFind(cache->inuse.rbt, key);
+	iter = rbtFind(cache->inuse.rb_tree, key);
 	if (iter) {
 		/* let's find a matching element */
-		rbtKeyValue(cache->inuse.rbt, iter, (void **) &e_key,
+		rbtKeyValue(cache->inuse.rb_tree, iter, (void **) &e_key,
 				(void **) &rbt_entry);
 
 		/* get the largest entry from the list */
@@ -1092,9 +1092,9 @@ static int __mr_cache_lookup_stale_fastpath(
 			"key.address=%llu key.length=%llu\n",
 			key->address, key->length);
 
-	iter = rbtFind(cache->stale.rbt, key);
+	iter = rbtFind(cache->stale.rb_tree, key);
 	if (iter) {
-		rbtKeyValue(cache->stale.rbt, iter, (void **) &e_key,
+		rbtKeyValue(cache->stale.rb_tree, iter, (void **) &e_key,
 				(void **) &current_entry);
 
 		if (current_entry->key.length >= length) {
@@ -1102,7 +1102,7 @@ static int __mr_cache_lookup_stale_fastpath(
 			atomic_set(&current_entry->ref_cnt, 1);
 
 			/* clear the element from the stale cache */
-			rc = rbtErase(cache->stale.rbt, iter);
+			rc = rbtErase(cache->stale.rb_tree, iter);
 			assert(rc == RBT_STATUS_OK);
 
 			__mr_cache_remove_stale_entry_no_tree(cache, current_entry);
@@ -1133,7 +1133,7 @@ static int __mr_cache_lookup_inuse_slowpath(
 			"key.address=%llu key.length=%llu\n",
 			key->address, key->length);
 
-	dlist_for_each(&cache->inuse.head, current, siblings) {
+	dlist_for_each(&cache->inuse.lcrs_tree, current, siblings) {
 		if (current->key.address > key->address)
 			break;
 
@@ -1162,7 +1162,7 @@ static int __mr_cache_lookup_stale_slowpath(
 			"key.address=%llu key.length=%llu\n",
 			key->address, key->length);
 
-	dlist_for_each_safe(&cache->stale.head, current, next, siblings) {
+	dlist_for_each_safe(&cache->stale.lcrs_tree, current, next, siblings) {
 		if (current->key.address > key->address)
 			break;
 
@@ -1251,7 +1251,7 @@ static int __mr_cache_create_registration(
 	GNIX_INFO(FI_LOG_MR, "inserting key %llu:%llu into inuse\n",
 			current_entry->key.address, current_entry->key.length);
 
-	iter = rbtFind(cache->inuse.rbt, &current_entry->key);
+	iter = rbtFind(cache->inuse.rb_tree, &current_entry->key);
 	if (!iter) {
 
 		dlist_insert_head(&current_entry->tree_entry, &rbt_entry->list);
@@ -1259,7 +1259,7 @@ static int __mr_cache_create_registration(
 				&rbt_entry->list, rbt_entry->list.next, rbt_entry->list.prev);
 
 
-		rc = rbtInsert(cache->inuse.rbt, &current_entry->key, rbt_entry);
+		rc = rbtInsert(cache->inuse.rb_tree, &current_entry->key, rbt_entry);
 		if (unlikely(rc != RBT_STATUS_OK)) {
 			GNIX_INFO(FI_LOG_MR, "failed to insert registration "
 					"into cache, ret=%i\n", rc);
@@ -1279,7 +1279,7 @@ static int __mr_cache_create_registration(
 			return -FI_ENOMEM;
 		}
 
-		dlist_for_each(&cache->inuse.head, tmp, siblings) {
+		dlist_for_each(&cache->inuse.lcrs_tree, tmp, siblings) {
 			if (current_entry->key.address < tmp->key.address) {
 				dlist_insert_before(&current_entry->siblings,
 						&tmp->siblings);
@@ -1289,13 +1289,13 @@ static int __mr_cache_create_registration(
 
 		if (dlist_empty(&current_entry->siblings))
 			dlist_insert_tail(&current_entry->siblings,
-					&cache->inuse.head);
+					&cache->inuse.lcrs_tree);
 	} else {
 		/* allocation is no longer needed */
 		_gnix_sfe_free(&rbt_entry->free_list_entry,
 				&cache->rbtlist_free);
 
-		rbtKeyValue(cache->inuse.rbt, iter, (void **) &key, (void **) &rbt_entry);
+		rbtKeyValue(cache->inuse.rb_tree, iter, (void **) &key, (void **) &rbt_entry);
 
 		/* since we are creating a new registration AND this
 		 * key already exists, then this must be the largest
@@ -1472,13 +1472,13 @@ static int __mr_cache_deregister(
 	 */
 	GNIX_INFO(FI_LOG_MR, "searching for key %llu:%llu\n",
 			mr->key.address, mr->key.length);
-	iter = rbtFind(cache->inuse.rbt, &mr->key);
+	iter = rbtFind(cache->inuse.rb_tree, &mr->key);
 	if (unlikely(!iter)) {
 		GNIX_WARN(FI_LOG_MR, "failed to find entry in the inuse cache\n");
 		return -FI_ENOENT;
 	}
 
-	rbtKeyValue(cache->inuse.rbt, iter, (void **) &e_key, (void **) &rbt_entry);
+	rbtKeyValue(cache->inuse.rb_tree, iter, (void **) &e_key, (void **) &rbt_entry);
 	GNIX_INFO(FI_LOG_MR, "found list=%p next=%p prev=%p\n",
 			&rbt_entry->list, rbt_entry->list.next, rbt_entry->list.prev);
 

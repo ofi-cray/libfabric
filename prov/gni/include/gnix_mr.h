@@ -180,9 +180,9 @@ typedef enum {
  * @brief  gnix memory registration cache entry storage
  */
 struct gnix_mrce_storage {
-	atomic_t elements;			// counter
-	RbtHandle rbt;				// fastpath red-black tree
-	struct dlist_entry head;	// slow path lc-rs tree
+	atomic_t elements;              // counter
+	RbtHandle rb_tree;              // fastpath red-black tree
+	struct dlist_entry lcrs_tree;   // slow path lc-rs tree
 };
 
 /**

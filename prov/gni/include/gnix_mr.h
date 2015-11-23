@@ -177,26 +177,31 @@ typedef enum {
 } gnix_mrc_state_e;
 
 /**
+ * @brief  gnix memory registration cache entry storage
+ */
+struct gnix_mrce_storage {
+	atomic_t elements;			// counter
+	RbtHandle rbt;				// fastpath red-black tree
+	struct dlist_entry head;	// slow path lc-rs tree
+};
+
+/**
  * @brief  gnix memory registration cache object
  *
  * @var    state           state of the cache
  * @var    attr            cache attributes, @see gnix_mr_cache_attr_t
- * @var    inuse           red-black tree containing in-use memory registrations
- * @var    stale           reb-black tree containing stale memory registrations
- * @var    inuse_elements  count of in-use memory registrations
- * @var    stale_elements  count of stale memory registrations
+ * @var    inuse           cache entry storage struct
+ * @var    stale           cache entry storage struct
+ * @var    lru_head        head of LRU eviction list
+ * @var    rbtlist_free    freelist of cache entries for fast allocation
  */
 typedef struct gnix_mr_cache {
 	gnix_mrc_state_e state;
 	gnix_mr_cache_attr_t attr;
-	RbtHandle inuse;
-	RbtHandle stale;
 	struct gnix_s_freelist rbtlist_free;
-	atomic_t inuse_elements;
-	atomic_t stale_elements;
 	struct dlist_entry lru_head;
-	struct dlist_entry inuse_sp_head;
-	struct dlist_entry stale_sp_head;
+	struct gnix_mrce_storage inuse;
+	struct gnix_mrce_storage stale;
 } gnix_mr_cache_t;
 
 /**

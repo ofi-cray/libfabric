@@ -131,14 +131,20 @@ static inline void dlist_remove_init(struct dlist_entry *e)
 	     e && (&e->member != h);					\
 	     e = dlist_entry((&e->member)->next, typeof(*e), member))
 
+#define __dlist_for_each_safe(h, e, n, first, member) \
+	for (e = (first),		\
+			 n = e ? dlist_entry((&e->member)->next,		\
+					 typeof(*e), member) : NULL;	\
+		 e && (&e->member != h);					\
+		 e = n, n = dlist_entry((&e->member)->next, typeof(*e), member))
+
 /* Iterate over the entries in the list, possibly deleting elements */
 #define dlist_for_each_safe(h, e, n, member)				\
-	for (e = dlist_first_entry(h, typeof(*e), member),		\
-		     n = e ? dlist_entry((&e->member)->next,		\
-					 typeof(*e), member) : NULL;	\
-	     e && (&e->member != h);					\
-	     e = n, n = dlist_entry((&e->member)->next, typeof(*e), member))
+	__dlist_for_each_safe(h, e, n, \
+			dlist_first_entry(h, typeof(*e), member), member)
 
+#define dlist_for_each_safe_continue(h, e, n, it, member) \
+	__dlist_for_each_safe(h, e, n, it, member)
 
 #define rwlock_t pthread_rwlock_t
 #define rwlock_init(lock) pthread_rwlock_init(lock, NULL)

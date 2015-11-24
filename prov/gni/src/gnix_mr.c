@@ -391,6 +391,15 @@ static inline int __mrce_inuse_insert_lrcs_tree(
 
 			dlist_remove(&current->siblings);
 			dlist_insert_tail(&current->siblings, &entry->children);
+
+			/* if this node has children, lets make them children of the new
+			 * registration
+			 */
+			if (!dlist_empty(&current->children)) {
+				dlist_splice_tail(&entry->children, &current->children);
+
+				__mr_cache_entry_put(cache, current, NULL);
+			}
 			continue;
 		}
 
@@ -616,6 +625,17 @@ static inline int __mr_cache_entry_put(
 		/* This entry is dead. It must be moved to the stale
 		 * list, if one exists
 		 */
+		if (!iter) {
+			/* if the iterator wasn't provided, let's find the entry */
+			iter = rbtFind(cache->inuse.rb_tree, &entry->key);
+			if (!iter) {
+				GNIX_ERR(FI_LOG_MR, "could not find entry in inuse tree,"
+						" entry=%p "
+						"entry->key.address=%llu entry->key.length=%llu\n",
+						entry, entry->key.address, entry->key.length);
+			}
+		}
+
 		rbtKeyValue(cache->inuse.rb_tree, iter, (void **) &key, (void **) &rbt_entry);
 
 		dlist_remove(&entry->tree_entry);
@@ -1330,7 +1350,7 @@ static int __mr_cache_create_registration(
 	int rc;
 	struct gnix_nic *nic;
 	gni_return_t grc = GNI_RC_SUCCESS;
-	gnix_mr_cache_entry_t *current_entry, *replace, *tmp;
+	gnix_mr_cache_entry_t *current_entry;
 	gnix_mr_key_t *key;
 	struct gnix_mr_rbt_entry *rbt_entry;
 	RbtIterator iter;
@@ -1406,19 +1426,7 @@ static int __mr_cache_create_registration(
 			return -FI_ENOMEM;
 		}
 
-
 		__mrce_inuse_insert_lrcs_tree(cache, current_entry);
-		/*dlist_for_each(&cache->inuse.lcrs_tree, tmp, siblings) {
-			if (current_entry->key.address < tmp->key.address) {
-				dlist_insert_before(&current_entry->siblings,
-						&tmp->siblings);
-				break;
-			}
-		}
-
-		if (dlist_empty(&current_entry->siblings))
-			dlist_insert_tail(&current_entry->siblings,
-					&cache->inuse.lcrs_tree);*/
 	} else {
 		/* allocation is no longer needed */
 		_gnix_sfe_free(&rbt_entry->free_list_entry,

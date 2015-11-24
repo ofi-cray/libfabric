@@ -146,6 +146,32 @@ static inline void dlist_remove_init(struct dlist_entry *e)
 #define dlist_for_each_safe_continue(h, e, n, it, member) \
 	__dlist_for_each_safe(h, e, n, it, member)
 
+static inline void dlist_splice_head(
+		struct dlist_entry *head,
+		struct dlist_entry *to_splice)
+{
+	if (dlist_empty(to_splice))
+		return;
+
+	/* hook head of 'head' to tail of 'to_splice' */
+	head->next->prev = to_splice->prev;
+	to_splice->prev->next = head->next;
+
+	/* hook head to head of 'to_splice' */
+	head->next = to_splice->next;
+	head->next->prev = head;
+
+	/* set list to empty */
+	to_splice->next = to_splice->prev = to_splice;
+}
+
+static inline void dlist_splice_tail(
+		struct dlist_entry *head,
+		struct dlist_entry *to_splice)
+{
+	dlist_splice_head(head->prev, to_splice);
+}
+
 #define rwlock_t pthread_rwlock_t
 #define rwlock_init(lock) pthread_rwlock_init(lock, NULL)
 #define rwlock_destroy(lock) pthread_rwlock_destroy(lock)

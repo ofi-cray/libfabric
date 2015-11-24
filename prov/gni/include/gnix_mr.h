@@ -34,7 +34,6 @@
 /**
  * @note The GNIX memory registration cache has the following properties:
  *         - Not thread safe
- *         - Uses two red black trees for internal storage and fast lookups
  *         - The hard registration limit includes the number of stale entries.
  *             Stale entries will be evicted to make room for new entries as
  *             the registration cache becomes full.
@@ -60,8 +59,65 @@
  *             time. Some stale entries may never be reused by an application.
  *             This value may also be changed by passing in a set of attributes
  *             during _gnix_mr_cache_init.
+ *
+ * The memory registration framework is based on the design of a two tree
+ * system for fast lookups. The first tree is a red-black tree for O(lg n)
+ * search times. The second tree is a Left Child - Right Sibling (lrcs) tree
+ * for the slower path. The combination of the two trees allows the memory
+ * registration cache to provide fast lookups while providing a minimal set
+ * of registrations to work from. The intent of the design is to minimize the
+ * number of occurrences where memory must be registered with the NIC.
+ *
+ * Registering a new region of memory with the NIC is computationally
+ * expensive. This can be avoided by caching registrations and reusing existing
+ * registrations. The caching portion is easy, since we can store the
+ * registrations in any form we choose, so long as there is a data structure
+ * that supports it. The minimization of registrations is actually difficult.
+ *
+ * The first approach taken in this endeavor was a red-black tree with a
+ * two property comparison. It was noted that this could not work because some
+ * elements would be inaccessible after a rebalance, so we changed the design
+ * to use a single property(address) comparison. This eliminated the bug but
+ * did not allow a minimal set of registrations because the second
+ * property(length) was the one which helped to identify overlapping regions.
+ *
+ * To remedy the issue caused by the bug fix, the last and current approach
+ * uses two different tree structures to organize the memory registrations.
+ *
+ * The fastpath utilizes the red-black tree for O(lg n) search times where
+ * the user is attempting to register a memory region where there is already
+ * a pre-existing registration at the same base address. By searching for the
+ * base address, we can check the length of the registration to see if it can
+ * satisfy the address. If it can satisfy the request, we are done.
+ *
+ * The slowpath utilizes the lcrs tree for O(n) search times.
+ * A left-child-right-sibling tree is an organization of data in a tree-like
+ * form where children are subsets of the parents, and siblings are distinct
+ * elements. For the case used in the memory registration cache, children
+ * are subsumable registrations to the parent, and siblings are non-subsumable
+ * registrations. By organizing data in this manner, we only need to search
+ * the siblings of the root to find a registration that would satisfy the
+ * request, as subsumed registrations would already be provided by an entry
+ * in the root sibling list. Performance of an application is improved by the
+ * slow path as reuse of registrations increases. Larger registrations further
+ * improve the runtime of the slow path by subsuming existing entries if
+ * possible.
+ *
+ * The slowpath and fastpath approaches are applied to the stale registration
+ * cache, which also provides LRU functionality. The stale registration cache
+ * drops/deletes entries that can be subsumed by existing entries to reduce
+ * the number of memory registrations and prevent larger registrations from
+ * being ejected via LRU.
+ *
+ * A number of assumptions are being made:
+ *   - When a lookup is being performed, no one else can modify the cache.
+ *   - Since no one can modify the cache while a lookup is occurring, certain
+ *     search criteria can be bypassed since we know a subsumable entry could
+ *     not have existed if a later search method is called.
+ *   - Since earlier methods could have found a registration but did not, then
+ *     some insertion criteria can be assumed to decrease the amount of
+ *     instructions necessary to create a new registration.
  */
-
 #ifndef GNIX_MR_H_
 #define GNIX_MR_H_
 

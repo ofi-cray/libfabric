@@ -32,9 +32,6 @@
  * SOFTWARE.
  */
 
-//
-// memory registration common code
-//
 #include <stdlib.h>
 #include <string.h>
 
@@ -400,7 +397,7 @@ static inline int __mrce_inuse_insert_lrcs_tree(
 		if (!to_insert && entry->key.address < current->key.address)
 			to_insert = &current->siblings;
 
-		if (current->key.address > end_addr)
+		if ((current->key.address + current->key.length) > end_addr)
 			break;
 	}
 
@@ -540,7 +537,7 @@ static inline int __mrce_stale_insert_lrcs_tree(
 		if (!to_insert && entry->key.address < current->key.address)
 			to_insert = &current->siblings;
 
-		if (current->key.address > end_addr)
+		if ((current->key.address + current->key.length) > end_addr)
 			break;
 	}
 

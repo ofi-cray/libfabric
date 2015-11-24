@@ -334,7 +334,7 @@ Test(memory_registration_cache, register_1024_distinct_regions)
 /* Test registration of 1024 registrations backed by the same initial
  *   registration. There should only be a single registration in the cache
  */
-Test(memory_registration_cache, register_1024_non_unique_regions, .disabled=true)
+Test(memory_registration_cache, register_1024_non_unique_regions)
 {
 	int ret;
 	char *hugepage;
@@ -629,11 +629,10 @@ Test(memory_registration_cache, lru_evict_middle_entry)
  * version of what the test rdm_sr::send_autoreg_uncached does under
  * the covers (currently).
  */
-Test(memory_registration_cache, same_addr_incr_size, .disabled=true)
+Test(memory_registration_cache, same_addr_incr_size)
 {
 	int ret;
 	int i;
-	int num_stale = 0;
 
 	for (i = 2; i <= buf_len; i *= 2) {
 		ret = fi_mr_reg(dom, (void *) buf, i, default_access,
@@ -645,20 +644,18 @@ Test(memory_registration_cache, same_addr_incr_size, .disabled=true)
 		cr_assert(cache->state == GNIX_MRC_STATE_READY);
 
 		cr_assert(atomic_get(&cache->inuse.elements) == 1);
-		cr_assert(atomic_get(&cache->stale.elements) == num_stale);
-
-		num_stale++;
+		cr_assert(atomic_get(&cache->stale.elements) <= 1);
 
 		ret = fi_close(&mr->fid);
 		cr_assert(ret == FI_SUCCESS);
 
 		cr_assert(atomic_get(&cache->inuse.elements) == 0);
-		cr_assert(atomic_get(&cache->stale.elements) == num_stale);
+		cr_assert(atomic_get(&cache->stale.elements) == 1);
 	}
 }
 
 /* Same as above, except with decreasing sizes */
-Test(memory_registration_cache, same_addr_decr_size, .disabled=true)
+Test(memory_registration_cache, same_addr_decr_size)
 {
 	int ret;
 	int i;
@@ -681,5 +678,64 @@ Test(memory_registration_cache, same_addr_decr_size, .disabled=true)
 		cr_assert(atomic_get(&cache->inuse.elements) == 0);
 		cr_assert(atomic_get(&cache->stale.elements) == 1);
 	}
+}
+
+/* Test duplicate registration. Since this is a valid operation, we
+ *   provide a unique fid_mr but internally, a second reference to the same
+ *   entry is provided to prevent expensive calls to GNI_MemRegister
+ */
+Test(memory_registration_cache, subsumable_registration)
+{
+	int ret;
+	struct fid_mr *mem_reg[3];
+	int region_len = 65536;
+	unsigned char *region = calloc(region_len, sizeof(unsigned char));
+
+	cr_assert(region != NULL);
+
+	ret = fi_mr_reg(dom, (void *) (region + (region_len / 4)), region_len / 2, default_access,
+			default_offset, default_req_key,
+			default_flags, &mem_reg[0], NULL);
+	cr_assert(ret == FI_SUCCESS);
+
+	cache = domain->mr_cache;
+	cr_assert(cache->state == GNIX_MRC_STATE_READY);
+
+	cr_assert(atomic_get(&cache->inuse.elements) == 1);
+	cr_assert(atomic_get(&cache->stale.elements) == 0);
+
+	ret = fi_mr_reg(dom, (void *) region, region_len, default_access,
+			default_offset, default_req_key,
+			default_flags, &mem_reg[1], NULL);
+	cr_assert(ret == FI_SUCCESS);
+
+	cr_assert(atomic_get(&cache->inuse.elements) == 2);
+	cr_assert(atomic_get(&cache->stale.elements) == 0);
+
+	ret = fi_close(&mem_reg[0]->fid);
+	cr_assert(ret == FI_SUCCESS);
+
+	cr_assert(atomic_get(&cache->inuse.elements) == 1);
+	cr_assert(atomic_get(&cache->stale.elements) == 1);
+
+	ret = fi_mr_reg(dom, (void *) (region + (region_len / 4)), region_len / 2, default_access,
+			default_offset, default_req_key,
+			default_flags, &mem_reg[2], NULL);
+	cr_assert(ret == FI_SUCCESS);
+
+	cr_assert(atomic_get(&cache->inuse.elements) == 1);
+	cr_assert(atomic_get(&cache->stale.elements) == 1);
+
+	ret = fi_close(&mem_reg[2]->fid);
+	cr_assert(ret == FI_SUCCESS);
+
+	cr_assert(atomic_get(&cache->inuse.elements) == 1);
+	cr_assert(atomic_get(&cache->stale.elements) == 1);
+
+	ret = fi_close(&mem_reg[1]->fid);
+	cr_assert(ret == FI_SUCCESS);
+
+	cr_assert(atomic_get(&cache->inuse.elements) == 0);
+	cr_assert(atomic_get(&cache->stale.elements) == 1);
 }
 

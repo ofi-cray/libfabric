@@ -1223,10 +1223,7 @@ static int __mr_cache_lookup_inuse_slowpath(
 			key->address, key->length);
 
 	dlist_for_each(&cache->inuse.lcrs_tree, current, siblings) {
-		GNIX_INFO(FI_LOG_MR, "\tkey.address=%llu key.length=%llu\n",
-					current->key.address, current->key.length);
 		if (current->key.address > key->address) {
-			GNIX_INFO(FI_LOG_MR, "stopping\n");
 			break;
 		}
 
@@ -1238,7 +1235,6 @@ static int __mr_cache_lookup_inuse_slowpath(
 			break;
 		}
 	}
-	GNIX_INFO(FI_LOG_MR, "done searching\n");
 
 	return ret;
 }
@@ -1276,6 +1272,7 @@ static int __mr_cache_lookup_stale_fastpath(
 			assert(rc == RBT_STATUS_OK);
 
 			__mrce_stale_remove_no_tree(cache, current_entry);
+			__mrce_stale_remove_lrcs_tree(cache, current_entry);
 
 			GNIX_INFO(FI_LOG_MR,
 					"moving key %llu:%llu from stale into inuse\n",
@@ -1326,6 +1323,10 @@ static int __mr_cache_lookup_stale_slowpath(
 		if (__can_subsume(&current->key, key)) {
 			/* found an entry which covers this range. remove and use it */
 			__mrce_stale_remove_rb_tree(cache, current);
+			__mrce_stale_remove_lrcs_tree(cache, current);
+
+			/* set reference count */
+			atomic_set(&current->ref_cnt, 1);
 
 			GNIX_INFO(FI_LOG_MR,
 					"moving key %llu:%llu from stale into inuse\n",
@@ -1333,12 +1334,27 @@ static int __mr_cache_lookup_stale_slowpath(
 					current->key.length);
 
 			ret = __mrce_inuse_insert_rb_tree(cache, current);
-			if (!ret) {
-				*entry = current;
-				break;
-			} else {
+			if (ret) {
+				GNIX_ERR(FI_LOG_MR, "could not insert into rb tree,"
+						" ret=%d\n", ret);
 				__mr_cache_entry_destroy(current);
+				return ret;
 			}
+
+			ret = __mrce_inuse_insert_lrcs_tree(cache, current);
+			if (ret) {
+				GNIX_ERR(FI_LOG_MR, "could not insert into lcrs tree,"
+						" ret=%d\n");
+
+				/* remove the entry from the rb tree */
+				__mrce_inuse_remove_rb_tree(cache, current);
+				__mr_cache_entry_destroy(current);
+				return ret;
+			}
+
+
+			*entry = current;
+			break;
 		}
 	}
 
@@ -1379,6 +1395,7 @@ static int __mr_cache_create_registration(
 	dlist_init(&current_entry->tree_entry);
 	dlist_init(&current_entry->children);
 	dlist_init(&current_entry->siblings);
+	dlist_init(&current_entry->lru_entry);
 
 	/* TODO: should we just try the first nic we find? */
 	/* NOTE: Can we assume the list is safe for access without a lock? */

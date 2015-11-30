@@ -48,8 +48,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
-#include <stdint.h>
-#include <sys/time.h>
 
 #include "gnix_cq.h"
 #include "gnix.h"
@@ -77,20 +75,6 @@ uint64_t default_access = (FI_REMOTE_READ | FI_REMOTE_WRITE
 uint64_t default_flags = 0;
 uint64_t default_req_key = 0;
 uint64_t default_offset = 0;
-
-struct timeval s1, s2;
-
-static void calculate_time_difference(struct timeval *start, struct timeval *end,
-		int *secs_out, int *usec_out)
-{
-	*secs_out = end->tv_sec - start->tv_sec;
-	if (end->tv_usec < start->tv_usec) {
-		*secs_out = *secs_out - 1;
-		*usec_out = (1000000 + end->tv_usec) - start->tv_usec;
-	} else {
-		*usec_out = end->tv_usec - start->tv_usec;
-	}
-}
 
 static void mr_setup(void)
 {
@@ -147,9 +131,6 @@ static void mr_teardown(void)
 TestSuite(memory_registration_bare, .init = mr_setup, .fini = mr_teardown);
 
 TestSuite(memory_registration_cache, .init = mr_setup, .fini = mr_teardown);
-
-TestSuite(perf_memory_registration, .init = mr_setup, .fini = mr_teardown);
-
 
 /* Test simple init, register and deregister */
 Test(memory_registration_bare, basic_init)
@@ -250,14 +231,14 @@ Test(memory_registration_cache, basic_init)
 	cache = domain->mr_cache;
 	cr_assert(cache->state == GNIX_MRC_STATE_READY);
 
-	cr_assert(atomic_get(&cache->inuse.elements) == 1);
-	cr_assert(atomic_get(&cache->stale.elements) == 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == 1);
+	cr_assert(atomic_get(&cache->stale_elements) == 0);
 
 	ret = fi_close(&mr->fid);
 	cr_assert(ret == FI_SUCCESS);
 
-	cr_assert(atomic_get(&cache->inuse.elements) == 0);
-	cr_assert(atomic_get(&cache->stale.elements) == 1);
+	cr_assert(atomic_get(&cache->inuse_elements) == 0);
+	cr_assert(atomic_get(&cache->stale_elements) == 1);
 }
 
 /* Test duplicate registration. Since this is a valid operation, we
@@ -277,16 +258,16 @@ Test(memory_registration_cache, duplicate_registration)
 	cache = domain->mr_cache;
 	cr_assert(cache->state == GNIX_MRC_STATE_READY);
 
-	cr_assert(atomic_get(&cache->inuse.elements) == 1);
-	cr_assert(atomic_get(&cache->stale.elements) == 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == 1);
+	cr_assert(atomic_get(&cache->stale_elements) == 0);
 
 	ret = fi_mr_reg(dom, (void *) buf, buf_len, default_access,
 			default_offset, default_req_key,
 			default_flags, &f_mr, NULL);
 	cr_assert(ret == FI_SUCCESS);
 
-	cr_assert(atomic_get(&cache->inuse.elements) == 1);
-	cr_assert(atomic_get(&cache->stale.elements) == 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == 1);
+	cr_assert(atomic_get(&cache->stale_elements) == 0);
 
 	ret = fi_close(&mr->fid);
 	cr_assert(ret == FI_SUCCESS);
@@ -294,8 +275,8 @@ Test(memory_registration_cache, duplicate_registration)
 	ret = fi_close(&f_mr->fid);
 	cr_assert(ret == FI_SUCCESS);
 
-	cr_assert(atomic_get(&cache->inuse.elements) == 0);
-	cr_assert(atomic_get(&cache->stale.elements) == 1);
+	cr_assert(atomic_get(&cache->inuse_elements) == 0);
+	cr_assert(atomic_get(&cache->stale_elements) == 1);
 }
 
 /* Test registration of 1024 elements, all distinct. Cache element counts
@@ -327,8 +308,8 @@ Test(memory_registration_cache, register_1024_distinct_regions)
 	}
 
 	cache = domain->mr_cache;
-	cr_assert(atomic_get(&cache->inuse.elements) == regions);
-	cr_assert(atomic_get(&cache->stale.elements) == 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == regions);
+	cr_assert(atomic_get(&cache->stale_elements) == 0);
 
 	for (i = 0; i < regions; ++i) {
 		ret = fi_close(&mr_arr[i]->fid);
@@ -346,14 +327,14 @@ Test(memory_registration_cache, register_1024_distinct_regions)
 	free(mr_arr);
 	mr_arr = NULL;
 
-	cr_assert(atomic_get(&cache->inuse.elements) == 0);
-	cr_assert(atomic_get(&cache->stale.elements) >= 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == 0);
+	cr_assert(atomic_get(&cache->stale_elements) >= 0);
 }
 
 /* Test registration of 1024 registrations backed by the same initial
  *   registration. There should only be a single registration in the cache
  */
-Test(memory_registration_cache, register_1024_non_unique_regions)
+Test(memory_registration_cache, register_1024_non_unique_regions, .disabled=true)
 {
 	int ret;
 	char *hugepage;
@@ -390,8 +371,8 @@ Test(memory_registration_cache, register_1024_non_unique_regions)
 	}
 
 	cache = domain->mr_cache;
-	cr_assert(atomic_get(&cache->inuse.elements) == 1);
-	cr_assert(atomic_get(&cache->stale.elements) == 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == 1);
+	cr_assert(atomic_get(&cache->stale_elements) == 0);
 
 	for (i = 0; i < regions; ++i) {
 		ret = fi_close(&mr_arr[i]->fid);
@@ -410,8 +391,8 @@ Test(memory_registration_cache, register_1024_non_unique_regions)
 	free(mr_arr);
 	mr_arr = NULL;
 
-	cr_assert(atomic_get(&cache->inuse.elements) == 0);
-	cr_assert(atomic_get(&cache->stale.elements) > 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == 0);
+	cr_assert(atomic_get(&cache->stale_elements) > 0);
 }
 
 /* Test registration of 128 regions that will be cycled in and out of the
@@ -447,8 +428,8 @@ Test(memory_registration_cache, cyclic_register_128_distinct_regions)
 
 	/* all registrations should now be 'in-use' */
 	cache = domain->mr_cache;
-	cr_assert(atomic_get(&cache->inuse.elements) == regions);
-	cr_assert(atomic_get(&cache->stale.elements) == 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == regions);
+	cr_assert(atomic_get(&cache->stale_elements) == 0);
 
 	for (i = 0; i < regions; ++i) {
 		ret = fi_close(&mr_arr[i]->fid);
@@ -456,8 +437,8 @@ Test(memory_registration_cache, cyclic_register_128_distinct_regions)
 	}
 
 	/* all registrations should now be 'stale' */
-	cr_assert(atomic_get(&cache->inuse.elements) == 0);
-	cr_assert(atomic_get(&cache->stale.elements) >= 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == 0);
+	cr_assert(atomic_get(&cache->stale_elements) >= 0);
 
 	for (i = 0; i < regions; ++i) {
 		ret = fi_mr_reg(dom, (void *) buffers[i], buf_size,
@@ -467,8 +448,8 @@ Test(memory_registration_cache, cyclic_register_128_distinct_regions)
 	}
 
 	/* all registrations should have been moved from 'stale' to 'in-use' */
-	cr_assert(atomic_get(&cache->inuse.elements) == regions);
-	cr_assert(atomic_get(&cache->stale.elements) == 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == regions);
+	cr_assert(atomic_get(&cache->stale_elements) == 0);
 
 	for (i = 0; i < regions; ++i) {
 		ret = fi_close(&mr_arr[i]->fid);
@@ -476,8 +457,8 @@ Test(memory_registration_cache, cyclic_register_128_distinct_regions)
 	}
 
 	/* all registrations should now be 'stale' */
-	cr_assert(atomic_get(&cache->inuse.elements) == 0);
-	cr_assert(atomic_get(&cache->stale.elements) >= 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == 0);
+	cr_assert(atomic_get(&cache->stale_elements) >= 0);
 
 	for (i = 0; i < regions; ++i) {
 		free(buffers[i]);
@@ -525,8 +506,8 @@ Test(memory_registration_cache, lru_evict_first_entry)
 
 	/* all registrations should now be 'in-use' */
 	cache = domain->mr_cache;
-	cr_assert(atomic_get(&cache->inuse.elements) == regions);
-	cr_assert(atomic_get(&cache->stale.elements) == 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == regions);
+	cr_assert(atomic_get(&cache->stale_elements) == 0);
 
 	/* deregister cache->stale_reg_limit + 1 to test if the first region was
 	 *   deregistered
@@ -544,8 +525,8 @@ Test(memory_registration_cache, lru_evict_first_entry)
 	}
 
 	/* all registrations should now be 'stale' */
-	cr_assert(atomic_get(&cache->inuse.elements) == regions - 1);
-	cr_assert(atomic_get(&cache->stale.elements) == 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == regions - 1);
+	cr_assert(atomic_get(&cache->stale_elements) == 0);
 
 	for (i = 1; i < regions; ++i) {
 		ret = fi_close(&mr_arr[i]->fid);
@@ -553,8 +534,8 @@ Test(memory_registration_cache, lru_evict_first_entry)
 	}
 
 	/* all registrations should now be 'stale' */
-	cr_assert(atomic_get(&cache->inuse.elements) == 0);
-	cr_assert(atomic_get(&cache->stale.elements) >= 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == 0);
+	cr_assert(atomic_get(&cache->stale_elements) >= 0);
 
 	for (i = 0; i < regions; ++i) {
 		free(buffers[i]);
@@ -599,8 +580,8 @@ Test(memory_registration_cache, lru_evict_middle_entry)
 
 	/* all registrations should now be 'in-use' */
 	cache = domain->mr_cache;
-	cr_assert(atomic_get(&cache->inuse.elements) == regions);
-	cr_assert(atomic_get(&cache->stale.elements) == 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == regions);
+	cr_assert(atomic_get(&cache->stale_elements) == 0);
 
 	/* deregister cache->stale_reg_limit + 1 to test if the first region was
 	 *   deregistered
@@ -628,8 +609,8 @@ Test(memory_registration_cache, lru_evict_middle_entry)
 	cr_assert(ret == FI_SUCCESS);
 
 	/* all registrations should now be 'stale' */
-	cr_assert(atomic_get(&cache->inuse.elements) == 0);
-	cr_assert(atomic_get(&cache->stale.elements) >= 0);
+	cr_assert(atomic_get(&cache->inuse_elements) == 0);
+	cr_assert(atomic_get(&cache->stale_elements) >= 0);
 
 	for (i = 0; i < regions; ++i) {
 		free(buffers[i]);
@@ -648,10 +629,11 @@ Test(memory_registration_cache, lru_evict_middle_entry)
  * version of what the test rdm_sr::send_autoreg_uncached does under
  * the covers (currently).
  */
-Test(memory_registration_cache, same_addr_incr_size)
+Test(memory_registration_cache, same_addr_incr_size, .disabled=true)
 {
 	int ret;
 	int i;
+	int num_stale = 0;
 
 	for (i = 2; i <= buf_len; i *= 2) {
 		ret = fi_mr_reg(dom, (void *) buf, i, default_access,
@@ -662,19 +644,21 @@ Test(memory_registration_cache, same_addr_incr_size)
 		cache = domain->mr_cache;
 		cr_assert(cache->state == GNIX_MRC_STATE_READY);
 
-		cr_assert(atomic_get(&cache->inuse.elements) == 1);
-		cr_assert(atomic_get(&cache->stale.elements) <= 1);
+		cr_assert(atomic_get(&cache->inuse_elements) == 1);
+		cr_assert(atomic_get(&cache->stale_elements) == num_stale);
+
+		num_stale++;
 
 		ret = fi_close(&mr->fid);
 		cr_assert(ret == FI_SUCCESS);
 
-		cr_assert(atomic_get(&cache->inuse.elements) == 0);
-		cr_assert(atomic_get(&cache->stale.elements) == 1);
+		cr_assert(atomic_get(&cache->inuse_elements) == 0);
+		cr_assert(atomic_get(&cache->stale_elements) == num_stale);
 	}
 }
 
 /* Same as above, except with decreasing sizes */
-Test(memory_registration_cache, same_addr_decr_size)
+Test(memory_registration_cache, same_addr_decr_size, .disabled=true)
 {
 	int ret;
 	int i;
@@ -688,232 +672,14 @@ Test(memory_registration_cache, same_addr_decr_size)
 		cache = domain->mr_cache;
 		cr_assert(cache->state == GNIX_MRC_STATE_READY);
 
-		cr_assert(atomic_get(&cache->inuse.elements) == 1);
-		cr_assert(atomic_get(&cache->stale.elements) == 0);
+		cr_assert(atomic_get(&cache->inuse_elements) == 1);
+		cr_assert(atomic_get(&cache->stale_elements) == 0);
 
 		ret = fi_close(&mr->fid);
 		cr_assert(ret == FI_SUCCESS);
 
-		cr_assert(atomic_get(&cache->inuse.elements) == 0);
-		cr_assert(atomic_get(&cache->stale.elements) == 1);
+		cr_assert(atomic_get(&cache->inuse_elements) == 0);
+		cr_assert(atomic_get(&cache->stale_elements) == 1);
 	}
 }
-
-/* Test subsumable registration. Since this is a valid operation, we
- *   provide a unique fid_mr but internally, a second reference to the same
- *   entry is provided to prevent expensive calls to GNI_MemRegister
- */
-Test(memory_registration_cache, subsumable_registration)
-{
-	int ret;
-	struct fid_mr *mem_reg[3];
-	int region_len = 65536;
-	unsigned char *region = calloc(region_len, sizeof(unsigned char));
-
-	cr_assert(region != NULL);
-
-	ret = fi_mr_reg(dom, (void *) (region + (region_len / 4)), region_len / 2, default_access,
-			default_offset, default_req_key,
-			default_flags, &mem_reg[0], NULL);
-	cr_assert(ret == FI_SUCCESS);
-
-	cache = domain->mr_cache;
-	cr_assert(cache->state == GNIX_MRC_STATE_READY);
-
-	cr_assert(atomic_get(&cache->inuse.elements) == 1);
-	cr_assert(atomic_get(&cache->stale.elements) == 0);
-
-	ret = fi_mr_reg(dom, (void *) region, region_len, default_access,
-			default_offset, default_req_key,
-			default_flags, &mem_reg[1], NULL);
-	cr_assert(ret == FI_SUCCESS);
-
-	cr_assert(atomic_get(&cache->inuse.elements) == 2);
-	cr_assert(atomic_get(&cache->stale.elements) == 0);
-
-	ret = fi_close(&mem_reg[0]->fid);
-	cr_assert(ret == FI_SUCCESS);
-
-	cr_assert(atomic_get(&cache->inuse.elements) == 1);
-	cr_assert(atomic_get(&cache->stale.elements) == 1);
-
-	ret = fi_mr_reg(dom, (void *) (region + (region_len / 4)), region_len / 2, default_access,
-			default_offset, default_req_key,
-			default_flags, &mem_reg[2], NULL);
-	cr_assert(ret == FI_SUCCESS);
-
-	cr_assert(atomic_get(&cache->inuse.elements) == 1);
-	cr_assert(atomic_get(&cache->stale.elements) == 1);
-
-	ret = fi_close(&mem_reg[2]->fid);
-	cr_assert(ret == FI_SUCCESS);
-
-	cr_assert(atomic_get(&cache->inuse.elements) == 1);
-	cr_assert(atomic_get(&cache->stale.elements) == 1);
-
-	ret = fi_close(&mem_reg[1]->fid);
-	cr_assert(ret == FI_SUCCESS);
-
-	cr_assert(atomic_get(&cache->inuse.elements) == 0);
-	cr_assert(atomic_get(&cache->stale.elements) == 1);
-
-	free(region);
-}
-
-Test(perf_memory_registration, non_overlapping_registration)
-{
-	int ret, i;
-	int region_len = 1 << 24;
-	int registration_width = 1 << 12;
-	int registrations = region_len / registration_width;
-	unsigned char *region = calloc(region_len, sizeof(unsigned char));
-	struct fid_mr **f_mr;
-	int reg_time, dereg_time, seconds;
-
-	cr_assert(region != NULL);
-
-	f_mr = calloc(registrations, sizeof(*f_mr));
-	cr_assert(f_mr != NULL);
-
-	gettimeofday(&s1, 0);
-	for (i = 0; i < registrations; i++) {
-		ret = fi_mr_reg(dom, (void *) (region + (registration_width * i)),
-				registration_width, default_access,
-				default_offset, default_req_key,
-				default_flags, &f_mr[i], NULL);
-		cr_assert(ret == FI_SUCCESS);
-	}
-	gettimeofday(&s2, 0);
-
-	calculate_time_difference(&s1, &s2, &seconds, &dereg_time);
-	reg_time += seconds * 1000000;
-
-	gettimeofday(&s1, 0);
-	for (i = 0; i < registrations; i++) {
-		ret = fi_close(&f_mr[i]->fid);
-		cr_assert(ret == FI_SUCCESS);
-	}
-	gettimeofday(&s2, 0);
-
-	calculate_time_difference(&s1, &s2, &seconds, &reg_time);
-	dereg_time += seconds * 1000000;
-
-	fprintf(stderr, "worst case: reg_time=%.3f usec dereg_time=%.3f usec\n",
-			reg_time / (registrations * 1.0),
-			dereg_time / (registrations * 1.0));
-
-	free(region);
-}
-
-Test(perf_memory_registration, single_large_registration)
-{
-	int ret, i;
-	int region_len = 1 << 24;
-	int registration_width = 1 << 12;
-	int registrations = region_len / registration_width;
-	unsigned char *region = calloc(region_len, sizeof(unsigned char));
-	struct fid_mr **f_mr;
-	int reg_time, dereg_time, seconds;
-
-	cr_assert(region != NULL);
-
-	f_mr = calloc(registrations, sizeof(*f_mr));
-	cr_assert(f_mr != NULL);
-
-	ret = fi_mr_reg(dom, (void *) region,
-					region_len, default_access,
-					default_offset, default_req_key,
-					default_flags, &mr, NULL);
-
-
-	gettimeofday(&s1, 0);
-	for (i = 0; i < registrations; i++) {
-		ret = fi_mr_reg(dom, (void *) (region + (registration_width * i)),
-				registration_width, default_access,
-				default_offset, default_req_key,
-				default_flags, &f_mr[i], NULL);
-		cr_assert(ret == FI_SUCCESS);
-	}
-	gettimeofday(&s2, 0);
-
-	calculate_time_difference(&s1, &s2, &seconds, &dereg_time);
-	reg_time += seconds * 1000000;
-
-	gettimeofday(&s1, 0);
-	for (i = 0; i < registrations; i++) {
-		ret = fi_close(&f_mr[i]->fid);
-		cr_assert(ret == FI_SUCCESS);
-	}
-	gettimeofday(&s2, 0);
-
-	calculate_time_difference(&s1, &s2, &seconds, &reg_time);
-	dereg_time += seconds * 1000000;
-
-	ret = fi_close(&mr->fid);
-	cr_assert(ret == FI_SUCCESS);
-
-	fprintf(stderr, "best case: reg_time=%.3f usec dereg_time=%.3f usec\n",
-			reg_time / (registrations * 1.0),
-			dereg_time / (registrations * 1.0));
-
-	free(region);
-}
-
-Test(perf_memory_registration, random_analysis)
-{
-	int ret, i;
-	int region_len = 1 << 24;
-	int registration_width = 1 << 12;
-	int registrations = region_len / registration_width;
-	unsigned char *region = calloc(region_len, sizeof(unsigned char));
-	struct fid_mr **f_mr;
-	int reg_time, dereg_time, seconds;
-	void *ptr;
-	uint64_t ptr_len;
-
-	srand(0xDEADBEEF);
-	cr_assert(region != NULL);
-
-	f_mr = calloc(registrations, sizeof(*f_mr));
-	cr_assert(f_mr != NULL);
-
-	gettimeofday(&s1, 0);
-	for (i = 0; i < registrations; i++) {
-		ptr = region + rand() % region_len;
-		ptr_len = rand() % (1 << 12);
-		ptr_len *= registration_width;
-		if ((uint64_t) (ptr + ptr_len) > (uint64_t) (region + region_len))
-			ptr_len = ((uint64_t) region + region_len) - (uint64_t) ptr;
-
-		ret = fi_mr_reg(dom, (void *) ptr,
-				ptr_len, default_access,
-				default_offset, default_req_key,
-				default_flags, &f_mr[i], NULL);
-		cr_assert(ret == FI_SUCCESS);
-	}
-	gettimeofday(&s2, 0);
-
-	calculate_time_difference(&s1, &s2, &seconds, &dereg_time);
-	reg_time += seconds * 1000000;
-
-	gettimeofday(&s1, 0);
-	for (i = 0; i < registrations; i++) {
-		ret = fi_close(&f_mr[i]->fid);
-		cr_assert(ret == FI_SUCCESS);
-	}
-	gettimeofday(&s2, 0);
-
-	calculate_time_difference(&s1, &s2, &seconds, &reg_time);
-	dereg_time += seconds * 1000000;
-
-	fprintf(stderr, "random average case: reg_time=%.3f usec "
-			"dereg_time=%.3f usec\n",
-			reg_time / (registrations * 1.0),
-			dereg_time / (registrations * 1.0));
-
-	free(region);
-}
-
-
-
 

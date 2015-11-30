@@ -78,7 +78,7 @@ static inline uint64_t __gnix_load_block(gnix_bitmap_t *bitmap, int index)
 }
 #endif
 
-static void calculate_time_difference(struct timeval *start, struct timeval *end,
+void calculate_time_difference(struct timeval *start, struct timeval *end,
 		int *secs_out, int *usec_out)
 {
 	*secs_out = end->tv_sec - start->tv_sec;

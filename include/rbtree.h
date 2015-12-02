@@ -90,6 +90,9 @@ void rbtKeyValue(RbtHandle h, RbtIterator i, void **key, void **value);
 void rbtValueReplace(RbtHandle h, RbtIterator it, void *val);
 // replaces user value associated with iterator
 
+RbtIterator _rbtFind(RbtHandle h, void *key, int (*compare)(void *a, void *b));
+// returns iterator associated with key using provided compare func
+
 RbtIterator rbtFind(RbtHandle h, void *key);
 // returns iterator associated with key
 

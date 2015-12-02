@@ -41,6 +41,10 @@
 #include "gnix_mr.h"
 #include "gnix_priv.h"
 
+typedef enum cache_entry_flags {
+	GNIX_CE_RETIRED = 1 << 0,
+} cache_entry_flags_e;
+
 /**
  * @brief gnix memory registration cache entry
  *
@@ -60,6 +64,7 @@ typedef struct gnix_mr_cache_entry {
 	struct dlist_entry tree_entry;
 	struct dlist_entry siblings;
 	struct dlist_entry children;
+	cache_entry_flags_e flags;
 } gnix_mr_cache_entry_t;
 
 struct gnix_mr_rbt_entry {
@@ -133,6 +138,38 @@ static inline int64_t __sign_extend(
 	int64_t r = (val ^ m) - m;
 
 	return r;
+}
+
+/**
+ * Key comparison function for finding overlapping gnix memory
+ * registration cache entries
+ *
+ * @param[in] x key to be inserted or found
+ * @param[in] y key to be compared against
+ *
+ * @return    -1 if it should be positioned at the left, 0 if the same,
+ *             1 otherwise
+ */
+static int __find_overlapping_addr(
+		void *x,
+		void *y)
+{
+	gnix_mr_cache_key_t *to_find  = (gnix_mr_cache_key_t *) x;
+	gnix_mr_cache_key_t *to_compare = (gnix_mr_cache_key_t *) y;
+	uint64_t to_find_end = to_find->address + to_find->length;
+	uint64_t to_compare_end = to_compare->address + to_compare->length;
+
+	if ((to_find->address >= to_compare->address &&
+			to_find->address <= to_compare_end) ||
+			(to_find_end >= to_compare->address &&
+					to_find_end <= to_compare_end))
+		return 0;
+
+	/* left */
+	if (to_find->address < to_compare->address)
+		return -1;
+
+	return 1;
 }
 
 /**
@@ -293,6 +330,14 @@ static inline int __mr_cache_lru_remove(
 	return FI_SUCCESS;
 }
 
+/**
+ * Destroys the memory registration cache entry and deregisters the memory
+ *   region with uGNI
+ *
+ * @param[in] entry  a memory registration cache entry
+ *
+ * @return           grc from GNI_MemDeregister
+ */
 static inline int __mr_cache_entry_destroy(
 		gnix_mr_cache_entry_t *entry)
 {
@@ -362,74 +407,6 @@ static inline int __mrce_inuse_insert_rb_tree(
 	return ret;
 }
 
-/**
- * Destroys the memory registration cache entry and deregisters the memory
- *   region with uGNI
- *
- * @param[in] entry  a memory registration cache entry
- *
- * @return           grc from GNI_MemDeregister
- */
-static inline int __mrce_inuse_insert_lrcs_tree(
-		gnix_mr_cache_t *cache,
-		gnix_mr_cache_entry_t *entry)
-{
-	gnix_mr_cache_entry_t *current, *next;
-	struct dlist_entry *to_insert = NULL;
-	uint64_t end_addr = entry->key.address + entry->key.length;
-
-	GNIX_INFO(FI_LOG_MR, "inserting entry via inuse slowpath, "
-			"entry=%p key.address=%llu key.length=%llu\n",
-			entry, entry->key.address, entry->key.length);
-
-	dlist_for_each_safe(&cache->inuse.lcrs_tree, current, next, siblings) {
-		if (__can_subsume(&entry->key, &current->key)) {
-			GNIX_INFO(FI_LOG_MR, "subsuming entry, "
-					"entry->key.address=%llu entry->key.length=%llu "
-					"subsumed->key.address=%llu subsumed->key.length=%llu\n",
-					entry->key.address, entry->key.length,
-					current->key.address, current->key.length);
-
-			/* if the entry can be subsumed, lets subsume it */
-			if (dlist_empty(&entry->children)) {
-				__mr_cache_entry_get(cache, entry);
-			}
-
-			dlist_remove(&current->siblings);
-			dlist_insert_tail(&current->siblings, &entry->children);
-
-			/* if this node has children, lets make them children of the new
-			 * registration
-			 */
-			if (!dlist_empty(&current->children)) {
-				dlist_splice_tail(&entry->children, &current->children);
-
-				__mr_cache_entry_put(cache, current, NULL);
-			}
-			continue;
-		}
-
-		if (!to_insert && entry->key.address < current->key.address)
-			to_insert = &current->siblings;
-
-		if ((current->key.address + current->key.length) > end_addr)
-			break;
-	}
-
-	if (to_insert) {
-		current = container_of(to_insert, gnix_mr_cache_entry_t, siblings);
-		GNIX_INFO(FI_LOG_MR, "inserting new element, "
-				"entry->key.address=%llu entry->key.length=%llu "
-				"subsumed->key.address=%llu subsumed->key.length=%llu\n",
-				entry->key.address, entry->key.length,
-				current->key.address, current->key.length);
-		dlist_insert_before(&entry->siblings, to_insert);
-	} else
-		dlist_insert_tail(&entry->siblings, &cache->inuse.lcrs_tree);
-
-	return FI_SUCCESS;
-}
-
 static inline int __mrce_inuse_remove_rb_tree(
 		gnix_mr_cache_t *cache,
 		gnix_mr_cache_entry_t *entry)
@@ -454,32 +431,6 @@ static inline int __mrce_inuse_remove_rb_tree(
 	return FI_SUCCESS;
 }
 
-static inline int __mrce_inuse_remove_lrcs_tree(
-		gnix_mr_cache_t        *cache,
-		gnix_mr_cache_entry_t  *entry)
-{
-	gnix_mr_cache_entry_t *parent;
-	struct dlist_entry *node = entry->siblings.next;
-	RbtIterator iter;
-
-	if (node != &cache->inuse.lcrs_tree && dlist_empty(node)) {
-		/* if the list is empty, lets decrement the reference that we
-		 * took earlier
-		 */
-		parent = container_of(node, gnix_mr_cache_entry_t, children);
-
-		iter = rbtFind(cache->inuse.rb_tree, &parent->key);
-		if (!iter)
-			GNIX_ERR(FI_LOG_MR, "something strange happened");
-
-		__mr_cache_entry_put(cache, parent, iter);
-	}
-
-	dlist_remove(&entry->siblings);
-
-	return FI_SUCCESS;
-}
-
 static inline int __mrce_stale_insert_rb_tree(
 		gnix_mr_cache_t *cache,
 		gnix_mr_cache_entry_t *to_insert)
@@ -500,7 +451,6 @@ static inline void __mrce_stale_remove_no_tree(
 		gnix_mr_cache_t *cache,
 		gnix_mr_cache_entry_t *to_remove)
 {
-	dlist_remove(&to_remove->siblings);
 	dlist_remove(&to_remove->lru_entry);
 
 	atomic_dec(&cache->stale.elements);
@@ -522,66 +472,6 @@ static inline int __mrce_stale_remove_rb_tree(
 	__mrce_stale_remove_no_tree(cache, to_remove);
 
 	return FI_SUCCESS;
-}
-
-static inline int __mrce_stale_insert_lrcs_tree(
-		gnix_mr_cache_t *cache,
-		gnix_mr_cache_entry_t *entry)
-{
-	gnix_mr_cache_entry_t *current, *next;
-	struct dlist_entry *to_insert = NULL;
-	uint64_t end_addr = entry->key.address + entry->key.length;
-
-	GNIX_INFO(FI_LOG_MR, "inserting entry via stale lrcs tree, "
-			"entry=%p key.address=%llu key.length=%llu\n",
-			entry, entry->key.address, entry->key.length);
-
-	dlist_for_each_safe(&cache->stale.lcrs_tree, current, next, siblings) {
-		if (__can_subsume(&entry->key, &current->key)) {
-			/* if the entry can be subsumed, lets remove it from the LRU
-			 * and add this new entry. It is likely that more entries may
-			 * be matched to the new entry than the old entry
-			 */
-			__mrce_stale_remove_rb_tree(cache, current);
-			__mr_cache_entry_destroy(current);
-			continue;
-		} else if (__can_subsume(&current->key, &entry->key)) {
-			return -FI_ENOSPC;
-		}
-
-		if (!to_insert && entry->key.address < current->key.address)
-			to_insert = &current->siblings;
-
-		if ((current->key.address + current->key.length) > end_addr)
-			break;
-	}
-
-	if (to_insert)
-		dlist_insert_before(&entry->siblings, to_insert);
-	else
-		dlist_insert_tail(&entry->siblings, &cache->stale.lcrs_tree);
-
-
-	return FI_SUCCESS;
-}
-
-
-
-static inline int __mrce_stale_remove_lrcs_tree(
-		gnix_mr_cache_t *cache,
-		gnix_mr_cache_entry_t *entry)
-{
-	GNIX_INFO(FI_LOG_MR, "removing entry from lrcs tree, "
-			"entry=%p key.address=%llu key.length=%llu\n",
-			entry, entry->key.address, entry->key.length);
-
-	if (!dlist_empty(&entry->siblings)) {
-		dlist_remove(&entry->siblings);
-
-		return FI_SUCCESS;
-	}
-
-	return -FI_ENOENT;
 }
 
 /**
@@ -654,13 +544,11 @@ static inline int __mr_cache_entry_put(
 		}
 		atomic_dec(&cache->inuse.elements);
 
-		__mrce_inuse_remove_lrcs_tree(cache, entry);
-		if (!dlist_empty(&entry->children)) {
-			GNIX_ERR(FI_LOG_MR, "deregistered a memory registration with "
-					"attached children, entry=%p", entry);
-		}
-
-		if (cache->attr.lazy_deregistration) {
+		/* if we are doing lazy dereg and the entry isn't retired, put it
+		 * in the stale cache
+		 */
+		if (cache->attr.lazy_deregistration &&
+				!(entry->flags & GNIX_CE_RETIRED)) {
 			GNIX_INFO(FI_LOG_MR, "moving key %llu:%llu to stale\n",
 					entry->key.address, entry->key.length);
 
@@ -676,12 +564,6 @@ static inline int __mr_cache_entry_put(
 				if (entry->key.length > c_entry->key.length) {
 					/* replace the entry */
 					rbtValueReplace(cache->stale.rb_tree, found, entry);
-
-					/* replace the stale entry list with this entry */
-					dlist_insert_after(&entry->siblings,
-							c_entry->siblings.prev);
-					dlist_remove(&c_entry->siblings);
-
 
 					/* clean up the old entry */
 					dlist_remove(&c_entry->lru_entry);
@@ -706,9 +588,6 @@ static inline int __mr_cache_entry_put(
 				}
 			} else {
 				ret = __mrce_stale_insert_rb_tree(cache, entry);
-				if (!ret)
-					ret = __mrce_stale_insert_lrcs_tree(cache, entry);
-
 				if (ret) {
 					__mrce_stale_remove_rb_tree(cache, entry);
 
@@ -1007,10 +886,6 @@ static int __gnix_mr_cache_init(
 		goto err_sfl_init;
 	}
 
-	/* initialize the slowpath heads */
-	dlist_init(&cache_p->inuse.lcrs_tree);
-	dlist_init(&cache_p->stale.lcrs_tree);
-
 	/* initialize the element counts. If we are reinitializing a dead cache,
 	 *   destroy will have already set the element counts
 	 */
@@ -1210,35 +1085,6 @@ static int __mr_cache_lookup_inuse_fastpath(
 	return ret;
 }
 
-static int __mr_cache_lookup_inuse_slowpath(
-		gnix_mr_cache_t *cache,
-		gnix_mr_cache_key_t *key,
-		gnix_mr_cache_entry_t **entry)
-{
-	int ret = -FI_ENOENT;
-	gnix_mr_cache_entry_t *current;
-
-	GNIX_INFO(FI_LOG_MR, "searching for entry via inuse slowpath, "
-			"key.address=%llu key.length=%llu\n",
-			key->address, key->length);
-
-	dlist_for_each(&cache->inuse.lcrs_tree, current, siblings) {
-		if (current->key.address > key->address) {
-			break;
-		}
-
-		if (__can_subsume(&current->key, key)) {
-			/* found an entry which covers this range. use it */
-			*entry = current;
-			__mr_cache_entry_get(cache, current);
-			ret = FI_SUCCESS;
-			break;
-		}
-	}
-
-	return ret;
-}
-
 static int __mr_cache_lookup_stale_fastpath(
 		gnix_mr_cache_t *cache,
 		gnix_mr_cache_key_t *key,
@@ -1272,7 +1118,6 @@ static int __mr_cache_lookup_stale_fastpath(
 			assert(rc == RBT_STATUS_OK);
 
 			__mrce_stale_remove_no_tree(cache, current_entry);
-			__mrce_stale_remove_lrcs_tree(cache, current_entry);
 
 			GNIX_INFO(FI_LOG_MR,
 					"moving key %llu:%llu from stale into inuse\n",
@@ -1286,75 +1131,8 @@ static int __mr_cache_lookup_stale_fastpath(
 				return ret;
 			}
 
-			ret = __mrce_inuse_insert_lrcs_tree(cache, current_entry);
-			if (ret) {
-				GNIX_ERR(FI_LOG_MR, "could not insert into lcrs tree,"
-						" ret=%d\n");
-
-				/* remove the entry from the rb tree */
-				__mrce_inuse_remove_rb_tree(cache, current_entry);
-				return ret;
-			}
-
 			*entry = current_entry;
 			atomic_inc(&cache->inuse.elements);
-		}
-	}
-
-	return ret;
-}
-
-static int __mr_cache_lookup_stale_slowpath(
-		gnix_mr_cache_t *cache,
-		gnix_mr_cache_key_t *key,
-		gnix_mr_cache_entry_t **entry)
-{
-	int ret = -FI_ENOENT;
-	gnix_mr_cache_entry_t *current, *next;
-
-	GNIX_INFO(FI_LOG_MR, "searching for entry via stale slowpath, "
-			"key.address=%llu key.length=%llu\n",
-			key->address, key->length);
-
-	dlist_for_each_safe(&cache->stale.lcrs_tree, current, next, siblings) {
-		if (current->key.address > key->address)
-			break;
-
-		if (__can_subsume(&current->key, key)) {
-			/* found an entry which covers this range. remove and use it */
-			__mrce_stale_remove_rb_tree(cache, current);
-			__mrce_stale_remove_lrcs_tree(cache, current);
-
-			/* set reference count */
-			atomic_set(&current->ref_cnt, 1);
-
-			GNIX_INFO(FI_LOG_MR,
-					"moving key %llu:%llu from stale into inuse\n",
-					current->key.address,
-					current->key.length);
-
-			ret = __mrce_inuse_insert_rb_tree(cache, current);
-			if (ret) {
-				GNIX_ERR(FI_LOG_MR, "could not insert into rb tree,"
-						" ret=%d\n", ret);
-				__mr_cache_entry_destroy(current);
-				return ret;
-			}
-
-			ret = __mrce_inuse_insert_lrcs_tree(cache, current);
-			if (ret) {
-				GNIX_ERR(FI_LOG_MR, "could not insert into lcrs tree,"
-						" ret=%d\n");
-
-				/* remove the entry from the rb tree */
-				__mrce_inuse_remove_rb_tree(cache, current);
-				__mr_cache_entry_destroy(current);
-				return ret;
-			}
-
-
-			*entry = current;
-			break;
 		}
 	}
 
@@ -1376,7 +1154,7 @@ static int __mr_cache_create_registration(
 	int rc;
 	struct gnix_nic *nic;
 	gni_return_t grc = GNI_RC_SUCCESS;
-	gnix_mr_cache_entry_t *current_entry;
+	gnix_mr_cache_entry_t *current_entry, *retired;
 	gnix_mr_key_t *key;
 	struct gnix_mr_rbt_entry *rbt_entry;
 	RbtIterator iter;
@@ -1393,8 +1171,6 @@ static int __mr_cache_create_registration(
 	}
 
 	dlist_init(&current_entry->tree_entry);
-	dlist_init(&current_entry->children);
-	dlist_init(&current_entry->siblings);
 	dlist_init(&current_entry->lru_entry);
 
 	/* TODO: should we just try the first nic we find? */
@@ -1420,11 +1196,13 @@ static int __mr_cache_create_registration(
 	/* set up the entry's key */
 	current_entry->key.address = address;
 	current_entry->key.length = length;
+	current_entry->flags = 0;
 
 	GNIX_INFO(FI_LOG_MR, "inserting key %llu:%llu into inuse\n",
 			current_entry->key.address, current_entry->key.length);
 
 	iter = rbtFind(cache->inuse.rb_tree, &current_entry->key);
+	//iter = _rbtFind(h, key, __find_overlapping_addr);
 	if (!iter) {
 
 		dlist_insert_head(&current_entry->tree_entry, &rbt_entry->list);
@@ -1451,8 +1229,6 @@ static int __mr_cache_create_registration(
 					&cache->rbtlist_free);
 			return -FI_ENOMEM;
 		}
-
-		__mrce_inuse_insert_lrcs_tree(cache, current_entry);
 	} else {
 		/* allocation is no longer needed */
 		_gnix_sfe_free(&rbt_entry->free_list_entry,
@@ -1465,9 +1241,12 @@ static int __mr_cache_create_registration(
 		 * registration we have. Place it at the front of the
 		 * list
 		 */
-		dlist_insert_head(&current_entry->tree_entry, &rbt_entry->list);
 
-		__mrce_inuse_insert_lrcs_tree(cache, current_entry);
+		retired = dlist_first_entry(&rbt_entry->list,
+				gnix_mr_cache_entry_t, tree_entry);
+		retired->flags |= GNIX_CE_RETIRED;
+
+		dlist_insert_head(&current_entry->tree_entry, &rbt_entry->list);
 	}
 
 
@@ -1525,10 +1304,6 @@ static int __mr_cache_register(
 	if (ret == FI_SUCCESS)
 		goto success;
 
-	ret = __mr_cache_lookup_inuse_slowpath(cache, &key, &entry);
-	if (ret == FI_SUCCESS)
-		goto success;
-
 	/* if we shouldn't introduce any new elements, return -FI_ENOSPC */
 	if (unlikely(cache->attr.hard_reg_limit > 0 &&
 			(atomic_get(&cache->inuse.elements) >=
@@ -1540,10 +1315,6 @@ static int __mr_cache_register(
 		 *   stale tree
 		 */
 		ret = __mr_cache_lookup_stale_fastpath(cache, &key, &entry, length);
-		if (ret == FI_SUCCESS)
-			goto success;
-
-		ret = __mr_cache_lookup_stale_slowpath(cache, &key, &entry);
 		if (ret == FI_SUCCESS)
 			goto success;
 	}

@@ -253,7 +253,6 @@ struct gnix_mrce_storage {
 typedef struct gnix_mr_cache {
 	gnix_mrc_state_e state;
 	gnix_mr_cache_attr_t attr;
-	struct gnix_s_freelist rbtlist_free;
 	struct dlist_entry lru_head;
 	struct gnix_mrce_storage inuse;
 	struct gnix_mrce_storage stale;

@@ -403,6 +403,28 @@ void rbtValueReplace(RbtHandle h, RbtIterator it, void *val) {
 	i->val = val;
 }
 
+void *rbtTraverseLeft(RbtHandle h, void *key, int(*compare)(void *a, void *b))
+{
+	RbtType *rbt = h;
+
+	NodeType *current = rbt->root;
+	NodeType *found = NULL;
+	while (current != SENTINEL) {
+		int rc = compare(key, current->key);
+
+		if (rc == 0) {
+			found = current;
+			current = current->left;
+		} else if (found) {
+			return found;
+		} else {
+			current = (rc < 0) ? current->right : current->left;
+		}
+	}
+
+	return NULL;
+}
+
 void *_rbtFind(RbtHandle h, void *key, int (*compare)(void *a, void *b)) {
     RbtType *rbt = h;
 

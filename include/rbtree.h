@@ -93,6 +93,11 @@ void rbtValueReplace(RbtHandle h, RbtIterator it, void *val);
 RbtIterator _rbtFind(RbtHandle h, void *key, int (*compare)(void *a, void *b));
 // returns iterator associated with key using provided compare func
 
+RbtIterator rbtTraverseLeft(RbtHandle h, void *key,
+		int(*compare)(void *a, void *b));
+// returns iterator associated with left-most match. This is useful when a new
+//   key might invalidate the uniqueness property of the tree.
+
 RbtIterator rbtFind(RbtHandle h, void *key);
 // returns iterator associated with key
 

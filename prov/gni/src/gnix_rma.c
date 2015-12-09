@@ -102,12 +102,14 @@ static int __gnix_rma_send_completion(struct gnix_fid_ep *ep,
 	}
 
 	if ((req->type == GNIX_FAB_RQ_RDMA_WRITE) &&
-	    ep->write_cntr)
+	    ep->write_cntr) {
 		cntr = ep->write_cntr;
+	}
 
 	if ((req->type == GNIX_FAB_RQ_RDMA_READ) &&
-	    ep->read_cntr)
+	    ep->read_cntr) {
 		cntr = ep->read_cntr;
+	}
 
 	if (cntr) {
 		rc = _gnix_cntr_inc(cntr);
@@ -733,6 +735,8 @@ ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
 	int rdma;
 	struct fid_mr *auto_mr = NULL, *align_mr = NULL;
 	void *align_buf = NULL;
+
+	GNIX_TRACE(FI_LOG_EP_DATA, "\n");
 
 	if (!ep) {
 		return -FI_EINVAL;

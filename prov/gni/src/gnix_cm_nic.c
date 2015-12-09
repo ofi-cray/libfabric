@@ -213,6 +213,8 @@ int _gnix_cm_nic_progress(struct gnix_cm_nic *cm_nic)
 	int complete;
 	struct gnix_work_req *p = NULL;
 
+	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
+
 	/*
 	 * if we're doing FI_PROGRESS_MANUAL,
 	 * see what's going on inside kgni's datagram
@@ -260,17 +262,22 @@ check_again:
 	assert(p->progress_fn);
 
 	ret = p->progress_fn(p->data, &complete);
-	if (ret != FI_SUCCESS)
+	if (ret != FI_SUCCESS) {
 		GNIX_WARN(FI_LOG_EP_CTRL,
 			  "dgram prog fn returned %s\n",
-				  fi_strerror(-ret));
+			  fi_strerror(-ret));
+	}
 
 	if (complete == 1) {
 		if (p->completer_fn) {
 			ret = p->completer_fn(p->completer_data);
 			free(p);
-			if (ret != FI_SUCCESS)
+			if (ret != FI_SUCCESS) {
+				GNIX_WARN(FI_LOG_EP_CTRL,
+					  "dgram completer fn returned %s\n",
+					  fi_strerror(-ret));
 				goto err;
+			}
 		}
 		goto check_again;
 	} else {

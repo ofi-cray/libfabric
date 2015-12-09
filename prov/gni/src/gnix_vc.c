@@ -1454,6 +1454,8 @@ static int __gnix_vc_rx_progress(struct gnix_vc *vc)
 {
 	int ret;
 
+	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
+
 	ret = __gnix_vc_connected(vc);
 	if (ret) {
 		/* The CM will schedule the VC when the connection is complete.
@@ -1504,6 +1506,8 @@ static int __gnix_nic_vc_rx_progress(struct gnix_nic *nic)
 {
 	struct gnix_vc *vc;
 	int ret;
+
+	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
 	while ((vc = __gnix_nic_next_pending_rx_vc(nic))) {
 		ret = __gnix_vc_rx_progress(vc);

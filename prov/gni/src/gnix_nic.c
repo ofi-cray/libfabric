@@ -323,6 +323,8 @@ int _gnix_nic_progress(struct gnix_nic *nic)
 {
 	int ret = FI_SUCCESS;
 
+	GNIX_TRACE(FI_LOG_EP_DATA, "\n");
+
 	ret =  __nic_tx_progress(nic);
 	if (unlikely(ret != FI_SUCCESS))
 		return ret;

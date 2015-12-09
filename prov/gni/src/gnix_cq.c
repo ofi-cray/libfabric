@@ -256,6 +256,8 @@ static int __gnix_cq_progress(struct gnix_fid_cq *cq)
 	struct gnix_cq_poll_nic *pnic, *tmp;
 	int rc;
 
+	GNIX_TRACE(FI_LOG_CQ, "\n");
+
 	rwlock_rdlock(&cq->nic_lock);
 
 	dlist_for_each_safe(&cq->poll_nics, pnic, tmp, list) {

@@ -448,17 +448,26 @@ Test(memory_registration_cache, cyclic_register_128_distinct_regions)
 
 	/* all registrations should now be 'stale' */
 	cr_assert(atomic_get(&cache->inuse.elements) == 0);
-	cr_assert(atomic_get(&cache->stale.elements) >= 0);
+	cr_assert(atomic_get(&cache->stale.elements) == 1);
 
+	fprintf(stdout, "starting re-register section\n");
+	fflush(stdout);
 	for (i = 0; i < regions; ++i) {
 		ret = fi_mr_reg(dom, (void *) buffers[i], buf_size,
 				default_access,	default_offset, default_req_key,
 				default_flags, &mr_arr[i], NULL);
 		cr_assert(ret == FI_SUCCESS);
+
+		cr_assert(atomic_get(&cache->inuse.elements) == 1);
+		cr_assert(atomic_get(&cache->stale.elements) == 0);
 	}
 
+	fprintf(stdout, "%d %d\n",
+			atomic_get(&cache->inuse.elements),
+			atomic_get(&cache->stale.elements));
+	fflush(stdout);
 	/* all registrations should have been moved from 'stale' to 'in-use' */
-	cr_assert(atomic_get(&cache->inuse.elements) == regions);
+	cr_assert(atomic_get(&cache->inuse.elements) == 1);
 	cr_assert(atomic_get(&cache->stale.elements) == 0);
 
 	for (i = 0; i < regions; ++i) {
@@ -468,7 +477,7 @@ Test(memory_registration_cache, cyclic_register_128_distinct_regions)
 
 	/* all registrations should now be 'stale' */
 	cr_assert(atomic_get(&cache->inuse.elements) == 0);
-	cr_assert(atomic_get(&cache->stale.elements) >= 0);
+	cr_assert(atomic_get(&cache->stale.elements) == 1);
 
 	for (i = 0; i < regions; ++i) {
 		free(buffers[i]);
@@ -535,7 +544,7 @@ Test(memory_registration_cache, lru_evict_first_entry)
 	}
 
 	/* all registrations should now be 'stale' */
-	cr_assert(atomic_get(&cache->inuse.elements) == regions - 1);
+	cr_assert(atomic_get(&cache->inuse.elements) == (regions >> 1) - 1);
 	cr_assert(atomic_get(&cache->stale.elements) == 0);
 
 	for (i = 1; i < regions; ++i) {
@@ -545,7 +554,7 @@ Test(memory_registration_cache, lru_evict_first_entry)
 
 	/* all registrations should now be 'stale' */
 	cr_assert(atomic_get(&cache->inuse.elements) == 0);
-	cr_assert(atomic_get(&cache->stale.elements) >= 0);
+	cr_assert(atomic_get(&cache->stale.elements) == 1);
 
 	for (i = 0; i < regions; ++i) {
 		free(buffers[i]);

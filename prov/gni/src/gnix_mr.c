@@ -41,6 +41,20 @@
 #include "gnix_mr.h"
 #include "gnix_priv.h"
 
+#define MR_PUT(cache, entry) \
+	({ \
+		GNIX_INFO(FI_LOG_MR, "put entry=%p refs=%d\n", entry, \
+				atomic_get(&(entry)->ref_cnt) - 1); \
+		__mr_cache_entry_put(cache, entry); \
+	})
+
+#define MR_GET(cache, entry) \
+	({ \
+		GNIX_INFO(FI_LOG_MR, "get entry=%p refs=%d\n", entry, \
+				atomic_get(&(entry)->ref_cnt) + 1); \
+		__mr_cache_entry_get(cache, entry); \
+	})
+
 typedef enum cache_entry_flags {
 	GNIX_CE_RETIRED = 1 << 0,
 } cache_entry_flags_e;
@@ -61,7 +75,6 @@ typedef struct gnix_mr_cache_entry {
 	struct gnix_nic *nic;
 	atomic_t ref_cnt;
 	struct dlist_entry lru_entry;
-	struct dlist_entry tree_entry;
 	struct dlist_entry siblings;
 	struct dlist_entry children;
 	cache_entry_flags_e flags;
@@ -227,7 +240,7 @@ static inline int __mr_exact_key(struct dlist_entry *entry,
 {
 	gnix_mr_cache_entry_t *x = container_of(entry,
 							gnix_mr_cache_entry_t,
-							tree_entry);
+							siblings);
 
 	gnix_mr_cache_key_t *y = (gnix_mr_cache_key_t *) match;
 
@@ -254,7 +267,7 @@ static gnix_mr_cache_entry_t *__find_first_match_entry(
 		return NULL;
 	}
 
-	entry = dlist_entry(iter, gnix_mr_cache_entry_t, tree_entry);
+	entry = dlist_entry(iter, gnix_mr_cache_entry_t, siblings);
 
 	return entry;
 }
@@ -385,15 +398,39 @@ static inline int __mr_cache_entry_put(
 {
 	int ret;
 	RbtStatus rc;
+	RbtIterator iter;
 	gnix_mr_cache_key_t *c_key;
 	gni_return_t grc = GNI_RC_SUCCESS;
 	RbtIterator found;
-	gnix_mr_cache_entry_t *c_entry;
+	gnix_mr_cache_entry_t *c_entry, *parent = NULL;
+	struct dlist_entry *next;
 
 	if (atomic_dec(&entry->ref_cnt) == 0) {
-		dlist_remove(&entry->tree_entry);
+		next = entry->siblings.next;
 		dlist_remove(&entry->children);
 		dlist_remove(&entry->siblings);
+
+		/* if this is the last child to deallocate, release the reference
+		 * to the parent
+		 */
+		if (next != &entry->siblings && dlist_empty(next)) {
+			parent = container_of(next, gnix_mr_cache_entry_t, children);
+
+			if (atomic_get(&parent->ref_cnt) == 1) {
+				iter = rbtFind(cache->inuse.rb_tree, (void*) &parent->key);
+				assert(iter);
+
+				rbtErase(cache->inuse.rb_tree, iter);
+			}
+
+			grc = MR_PUT(cache, parent);
+			if (unlikely(grc != GNI_RC_SUCCESS)) {
+				GNIX_ERR(FI_LOG_MR,
+						"failed to release reference to parent, "
+						"parent=%p refs=%d\n",
+						parent, atomic_get(&parent->ref_cnt));
+			}
+		}
 
 		atomic_dec(&cache->inuse.elements);
 
@@ -457,12 +494,13 @@ static inline int __mr_cache_entry_put(
 		} else {
 			grc = __mr_cache_entry_destroy(entry);
 		}
+
+		if (unlikely(grc != GNI_RC_SUCCESS)) {
+			GNIX_WARN(FI_LOG_MR, "GNI_MemDeregister returned '%s'\n",
+					gni_err_str[grc]);
+		}
 	}
 
-	if (grc != GNI_RC_SUCCESS) {
-		GNIX_WARN(FI_LOG_MR, "GNI_MemDeregister returned '%s'\n",
-				gni_err_str[grc]);
-	}
 
 	return grc;
 }
@@ -897,7 +935,7 @@ static int __mr_cache_search_inuse(
 	RbtIterator iter, next;
 	RbtStatus rc;
 	gnix_mr_cache_key_t *found_key, new_key;
-	gnix_mr_cache_entry_t *found_entry;
+	gnix_mr_cache_entry_t *found_entry, *next_entry;
 	uint64_t new_end, found_end;
 	DLIST_HEAD(tmp);
 
@@ -929,6 +967,8 @@ static int __mr_cache_search_inuse(
 				found_key->address, found_key->length,
 				key->address, key->length);
 		*entry = found_entry;
+		MR_GET(cache, found_entry);
+
 		return FI_SUCCESS;
 	}
 
@@ -950,18 +990,17 @@ static int __mr_cache_search_inuse(
 		found_entry->flags |= GNIX_CE_RETIRED;
 		dlist_insert_tail(&found_entry->siblings, &tmp);
 
-		if (!dlist_empty(&found_entry->children)) {
-			/* move the entry's children to the sibling tree
-			 * and decrement the reference count */
-			dlist_splice_tail(&tmp, &found_entry->children);
-			__mr_cache_entry_put(cache, found_entry);
-		}
-
 		/* TODO, retired entries might be fully deallocated after decreasing
 		 * the reference if the entry had
 		 */
 		iter = rbtNext(cache->inuse.rb_tree, iter);
 	}
+	/* Since our new key might fully overlap every other entry in the tree,
+	 * we need to take the maximum of the last entry and the new entry
+	 */
+	found_end = found_key->address + found_key->length;
+	new_key.length = MAX(found_end, new_end) - new_key.address;
+
 
 	dlist_for_each(&tmp, found_entry, siblings)
 	{
@@ -974,12 +1013,6 @@ static int __mr_cache_search_inuse(
 		assert(rc == RBT_STATUS_OK);
 	}
 
-	/* Since our new key might fully overlap every other entry in the tree,
-	 * we need to take the maximum of the last entry and the new entry
-	 */
-	found_end = found_key->address + found_key->length;
-	new_key.length = MAX(found_end, new_end) - new_key.address;
-
 
 	GNIX_INFO(FI_LOG_MR, "creating a new merged registration, key=%d:%d\n",
 			new_key.address, new_key.length);
@@ -987,15 +1020,28 @@ static int __mr_cache_search_inuse(
 			new_key.address, new_key.length, dst_cq_hndl, flags,
 			vmdh_index, mem_hndl, entry, &new_key);
 	assert(ret == FI_SUCCESS);
-	if (!ret) {
+	if (ret) {
 		/* TODO need to re-insert those retired elements back into the tree */
 		return ret;
 	}
 
 	/* move retired entries to the head of the new entry's child list */
 	if (!dlist_empty(&tmp)) {
-		dlist_splice_head(&(*entry)->children, &tmp);
-		__mr_cache_entry_get(cache, *entry);
+		dlist_for_each_safe(&tmp, found_entry, next_entry, siblings)
+		{
+			dlist_remove(&found_entry->siblings);
+			dlist_insert_tail(&found_entry->siblings,
+					&(*entry)->children);
+			if (!dlist_empty(&found_entry->children)) {
+				/* move the entry's children to the sibling tree
+				 * and decrement the reference count */
+				dlist_splice_tail(&(*entry)->children,
+						&found_entry->children);
+				MR_PUT(cache, found_entry);
+			}
+		}
+		assert(dlist_empty(&tmp));
+		MR_GET(cache, *entry);
 	}
 
 	return ret;
@@ -1019,13 +1065,20 @@ static int __mr_cache_search_stale(
 	gnix_mr_cache_key_t *mr_key;
 	gnix_mr_cache_entry_t *mr_entry;
 
-	iter = rbtTraverseLeft(cache->stale.rb_tree, (void *) &key,
+	GNIX_INFO(FI_LOG_MR, "searching for stale entry, key=%d:%d\n",
+			key->address, key->length);
+
+	iter = rbtTraverseLeft(cache->stale.rb_tree, (void *) key,
 			__find_overlapping_addr);
 	if (!iter)
 		return -FI_ENOENT;
 
 	rbtKeyValue(cache->stale.rb_tree, iter, (void **) &mr_key,
 			(void **) &mr_entry);
+
+	GNIX_INFO(FI_LOG_MR, "found a matching entry, found=%d:%d key=%d:%d\n",
+			mr_key->address, mr_key->length, key->address, key->length);
+
 
 	/* if the entry that we've found completely subsumes the requested entry,
 	 * just return a reference to that existing registration
@@ -1034,10 +1087,14 @@ static int __mr_cache_search_stale(
 		rc = rbtErase(cache->stale.rb_tree, iter);
 		assert(rc == RBT_STATUS_OK);
 
+		dlist_remove(&mr_entry->lru_entry);
+
+		atomic_dec(&cache->stale.elements);
+
 		/* if we made it to this point, there weren't any entries in
 		 * the inuse tree that would have overlapped with this entry
 		 */
-		rc = rbtInsert(cache->stale.rb_tree, &mr_entry->key, mr_entry);
+		rc = rbtInsert(cache->inuse.rb_tree, &mr_entry->key, mr_entry);
 		assert(rc == RBT_STATUS_OK);
 
 		atomic_set(&mr_entry->ref_cnt, 1);
@@ -1075,7 +1132,6 @@ static int __mr_cache_create_registration(
 	if (!current_entry)
 		return -FI_ENOMEM;
 
-	dlist_init(&current_entry->tree_entry);
 	dlist_init(&current_entry->lru_entry);
 	dlist_init(&current_entry->children);
 	dlist_init(&current_entry->siblings);
@@ -1263,13 +1319,15 @@ static int __mr_cache_deregister(
 			e_key->address, e_key->length);
 	if (__match_exact_key(&mr->key, &head_entry->key)) {
 		entry = head_entry;
+		if (atomic_get(&entry->ref_cnt) == 1)
+			rbtErase(cache->inuse.rb_tree, iter);
 	} else {
-		entry = __find_first_match_entry(&head_entry->tree_entry, &mr->key);
+		entry = __find_first_match_entry(&head_entry->children, &mr->key);
 		if (!entry)
 			return -FI_ENOENT;
 	}
 
-	grc = __mr_cache_entry_put(cache, entry);
+	grc = MR_PUT(cache, entry);
 
 	/* Since we check this on each deregistration, the amount of elements
 	 * over the limit should always be 1

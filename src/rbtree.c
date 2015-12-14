@@ -422,7 +422,7 @@ void *rbtTraverseLeft(RbtHandle h, void *key, int(*compare)(void *a, void *b))
 		}
 	}
 
-	return NULL;
+	return found;
 }
 
 void *_rbtFind(RbtHandle h, void *key, int (*compare)(void *a, void *b)) {

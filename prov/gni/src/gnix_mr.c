@@ -179,7 +179,7 @@ static int __find_overlapping_addr(
 	uint64_t to_find_end = to_find->address + to_find->length;
 	uint64_t to_compare_end = to_compare->address + to_compare->length;
 
-	GNIX_INFO(FI_LOG_MR, "comparing keys, x=%d:%d y=%d:%d\n",
+	GNIX_INFO(FI_LOG_MR, "comparing keys, x=%llu:%llu y=%llu:%llu\n",
 			to_find->address, to_find->length,
 			to_compare->address, to_compare->length);
 
@@ -212,7 +212,7 @@ static inline int __mr_cache_key_comp(
 	gnix_mr_cache_key_t *to_insert  = (gnix_mr_cache_key_t *) x;
 	gnix_mr_cache_key_t *to_compare = (gnix_mr_cache_key_t *) y;
 
-	GNIX_INFO(FI_LOG_MR, "comparing keys, x=%d:%d y=%d:%d\n",
+	GNIX_INFO(FI_LOG_MR, "comparing keys, x=%llu:%llu y=%llu:%llu\n",
 				to_insert->address, to_insert->length,
 				to_compare->address, to_compare->length);
 
@@ -946,7 +946,7 @@ static int __mr_cache_search_inuse(
 	iter = rbtTraverseLeft(cache->inuse.rb_tree, (void *) key,
 			__find_overlapping_addr);
 	if (!iter) {
-		GNIX_INFO(FI_LOG_MR, "could not find key in inuse, key=%d:%d\n",
+		GNIX_INFO(FI_LOG_MR, "could not find key in inuse, key=%llu:%llu\n",
 				key->address, key->length);
 		return -FI_ENOENT;
 	}
@@ -955,7 +955,7 @@ static int __mr_cache_search_inuse(
 			(void **) &found_entry);
 
 	GNIX_INFO(FI_LOG_MR, "found a key that matches the search criteria, "
-				"found=%d:%d key=%d:%d\n",
+				"found=%llu:%llu key=%llu:%llu\n",
 				found_key->address, found_key->length,
 				key->address, key->length);
 	/* if the entry that we've found completely subsumes the requested entry,
@@ -963,7 +963,7 @@ static int __mr_cache_search_inuse(
 	 */
 	if (__can_subsume(found_key, key)) {
 		GNIX_INFO(FI_LOG_MR, "found an entry that subsumes the request, "
-				"existing=%d:%d key=%d:%d\n",
+				"existing=%llu:%llu key=%llu:%llu\n",
 				found_key->address, found_key->length,
 				key->address, key->length);
 		*entry = found_entry;
@@ -985,7 +985,7 @@ static int __mr_cache_search_inuse(
 			break;
 
 		/* mark the entry as retired */
-		GNIX_INFO(FI_LOG_MR, "retiring entry, key=%d:%d\n",
+		GNIX_INFO(FI_LOG_MR, "retiring entry, key=%llu:%llu\n",
 				found_key->address, found_key->length);
 		found_entry->flags |= GNIX_CE_RETIRED;
 		dlist_insert_tail(&found_entry->siblings, &tmp);
@@ -1004,7 +1004,7 @@ static int __mr_cache_search_inuse(
 
 	dlist_for_each(&tmp, found_entry, siblings)
 	{
-		GNIX_INFO(FI_LOG_MR, "removing key from inuse, key=%d:%d\n",
+		GNIX_INFO(FI_LOG_MR, "removing key from inuse, key=%llu:%llu\n",
 				found_entry->key.address, found_entry->key.length);
 		iter = rbtFind(cache->inuse.rb_tree, &found_entry->key);
 		assert(iter);
@@ -1014,7 +1014,7 @@ static int __mr_cache_search_inuse(
 	}
 
 
-	GNIX_INFO(FI_LOG_MR, "creating a new merged registration, key=%d:%d\n",
+	GNIX_INFO(FI_LOG_MR, "creating a new merged registration, key=%llu:%llu\n",
 			new_key.address, new_key.length);
 	ret = __mr_cache_create_registration(cache, mr, domain,
 			new_key.address, new_key.length, dst_cq_hndl, flags,
@@ -1065,7 +1065,7 @@ static int __mr_cache_search_stale(
 	gnix_mr_cache_key_t *mr_key;
 	gnix_mr_cache_entry_t *mr_entry;
 
-	GNIX_INFO(FI_LOG_MR, "searching for stale entry, key=%d:%d\n",
+	GNIX_INFO(FI_LOG_MR, "searching for stale entry, key=%llu:%llu\n",
 			key->address, key->length);
 
 	iter = rbtTraverseLeft(cache->stale.rb_tree, (void *) key,
@@ -1076,7 +1076,7 @@ static int __mr_cache_search_stale(
 	rbtKeyValue(cache->stale.rb_tree, iter, (void **) &mr_key,
 			(void **) &mr_entry);
 
-	GNIX_INFO(FI_LOG_MR, "found a matching entry, found=%d:%d key=%d:%d\n",
+	GNIX_INFO(FI_LOG_MR, "found a matching entry, found=%llu:%llu key=%llu:%llu\n",
 			mr_key->address, mr_key->length, key->address, key->length);
 
 
@@ -1315,7 +1315,7 @@ static int __mr_cache_deregister(
 	rbtKeyValue(cache->inuse.rb_tree, iter, (void **) &e_key,
 			(void **) &head_entry);
 
-	GNIX_INFO(FI_LOG_MR, "found a corresponding entry, key=%d:%d\n",
+	GNIX_INFO(FI_LOG_MR, "found a corresponding entry, key=%llu:%llu\n",
 			e_key->address, e_key->length);
 	if (__match_exact_key(&mr->key, &head_entry->key)) {
 		entry = head_entry;

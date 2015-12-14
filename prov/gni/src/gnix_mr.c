@@ -231,6 +231,10 @@ static inline int __match_exact_key(
 		gnix_mr_cache_key_t *entry,
 		gnix_mr_cache_key_t *to_match)
 {
+	GNIX_INFO(FI_LOG_MR, "comparing keys, x=%llu:%llu y=%llu:%llu\n",
+					entry->address, entry->length,
+					to_match->address, to_match->length);
+
 	return entry->address == to_match->address &&
 			entry->length == to_match->length;
 }

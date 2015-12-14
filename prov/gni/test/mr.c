@@ -341,6 +341,86 @@ Test(memory_registration_cache, register_1024_distinct_regions)
 	cr_assert(atomic_get(&cache->stale.elements) >= 0);
 }
 
+struct reg_info {
+	char *buf;
+	int len;
+};
+
+/* Test registration of 1024 elements, all distinct. Cache element counts
+ *   should meet expected values
+ */
+Test(memory_registration_cache, bug)
+{
+	int ret;
+	char *buffer;
+	struct fid_mr **mr_arr;
+	int i;
+	int len = 1 << 16;
+	int registrations = 15;
+	struct reg_info mr_reg_info[15];
+
+	mr_arr = calloc(regions, sizeof(struct fid_mr *));
+	cr_assert(mr_arr);
+
+	buffer = calloc((registrations + 1) * len, sizeof(char *));
+	cr_assert(buffer, "failed to allocate array of buffers");
+
+
+	for (i = 0; i < registrations; i++) {
+		struct reg_info *info = &mr_reg_info[i];
+
+		// alternate striding over registrations to create discontinuous
+		// registrations
+		if (i < 4)
+			info->buf = &buffer[(2 * len) * (2 * i)];
+		else if (i < 8)
+			info->buf = &buffer[(2 * len) * ((2 * (i - 4)) + 1)];
+		else if (i < 10)
+			info->buf = &buffer[(4 * len) * (2 * (i - 8))];
+		else if (i < 12)
+			info->buf = &buffer[(4 * len) * ((2 * (i - 10)) + 1)];
+		else if (i < 14)
+			info->buf = &buffer[(8 * len) * ((i - 12))];
+		else
+			info->buf = buffer;
+
+
+		if (i < 8)
+			info->len = 2 * len;
+		else if (i < 12)
+			info->len = 4 * len;
+		else if (i < 14)
+			info->len = 8 * len;
+		else
+			info->len = 16 * len;
+	}
+
+	for (i = 0; i < registrations; ++i) {
+		ret = fi_mr_reg(dom, (void *) &mr_reg_info[i].buf, &mr_reg_info[i].len,
+				default_access,	default_offset, default_req_key,
+				default_flags, &mr_arr[i], NULL);
+		cr_assert(ret == FI_SUCCESS);
+	}
+
+	cache = domain->mr_cache;
+	cr_assert(atomic_get(&cache->inuse.elements) == regions);
+	cr_assert(atomic_get(&cache->stale.elements) == 0);
+
+	for (i = 0; i < registrations; ++i) {
+		ret = fi_close(&mr_arr[i]->fid);
+		cr_assert(ret == FI_SUCCESS);
+	}
+
+	free(buffer);
+	buffer = NULL;
+
+	free(mr_arr);
+	mr_arr = NULL;
+
+	cr_assert(atomic_get(&cache->inuse.elements) == 0);
+	cr_assert(atomic_get(&cache->stale.elements) >= 0);
+}
+
 /* Test registration of 1024 registrations backed by the same initial
  *   registration. There should only be a single registration in the cache
  */

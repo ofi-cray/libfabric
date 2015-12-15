@@ -935,7 +935,7 @@ static int __mr_cache_search_inuse(
 		gnix_mr_cache_entry_t    **entry,
 		gnix_mr_cache_key_t      *key)
 {
-	int ret = FI_SUCCESS;
+	int ret = FI_SUCCESS, cmp;
 	RbtIterator iter, next;
 	RbtStatus rc;
 	gnix_mr_cache_key_t *found_key, new_key;
@@ -985,8 +985,16 @@ static int __mr_cache_search_inuse(
 	while (iter) {
 		rbtKeyValue(cache->inuse.rb_tree, iter, (void **) &found_key,
 				(void **) &found_entry);
-		if (__find_overlapping_addr(found_key, key))
+
+
+		cmp = __find_overlapping_addr(found_key, key);
+		GNIX_INFO(FI_LOG_MR, "candidate: key=%llu:%llu result=%d\n", found_key->address,
+						found_key->length, cmp);
+		if (cmp != 0)
 			break;
+
+		/* compute new ending address */
+		found_end = found_key->address + found_key->length;
 
 		/* mark the entry as retired */
 		GNIX_INFO(FI_LOG_MR, "retiring entry, key=%llu:%llu\n",
@@ -998,11 +1006,11 @@ static int __mr_cache_search_inuse(
 		 * the reference if the entry had
 		 */
 		iter = rbtNext(cache->inuse.rb_tree, iter);
+		GNIX_INFO(FI_LOG_MR, "next=%p\n", iter);
 	}
 	/* Since our new key might fully overlap every other entry in the tree,
 	 * we need to take the maximum of the last entry and the new entry
 	 */
-	found_end = found_key->address + found_key->length;
 	new_key.length = MAX(found_end, new_end) - new_key.address;
 
 
@@ -1026,6 +1034,7 @@ static int __mr_cache_search_inuse(
 	assert(ret == FI_SUCCESS);
 	if (ret) {
 		/* TODO need to re-insert those retired elements back into the tree */
+		GNIX_ERR(FI_LOG_MR, "failure\n");
 		return ret;
 	}
 

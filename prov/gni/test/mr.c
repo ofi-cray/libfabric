@@ -369,7 +369,7 @@ Test(memory_registration_cache, bug)
 	for (i = 0; i < registrations; i++) {
 		struct reg_info *info = &mr_reg_info[i];
 
-		// alternate striding over registrations to create discontinuous
+		// alternate striding over registrations to create discontiguous
 		// registrations
 		if (i < 4)
 			info->buf = &buffer[(2 * len) * (2 * i)];
@@ -396,14 +396,14 @@ Test(memory_registration_cache, bug)
 	}
 
 	for (i = 0; i < registrations; ++i) {
-		ret = fi_mr_reg(dom, (void *) &mr_reg_info[i].buf, &mr_reg_info[i].len,
+		ret = fi_mr_reg(dom, (void *) mr_reg_info[i].buf, mr_reg_info[i].len,
 				default_access,	default_offset, default_req_key,
 				default_flags, &mr_arr[i], NULL);
 		cr_assert(ret == FI_SUCCESS);
 	}
 
 	cache = domain->mr_cache;
-	cr_assert(atomic_get(&cache->inuse.elements) == regions);
+	cr_assert(atomic_get(&cache->inuse.elements) == (registrations / 2));
 	cr_assert(atomic_get(&cache->stale.elements) == 0);
 
 	for (i = 0; i < registrations; ++i) {

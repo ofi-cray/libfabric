@@ -416,7 +416,10 @@ void *rbtTraverseLeft(RbtHandle h, void *key, int(*compare)(void *a, void *b))
 			found = current;
 			current = current->left;
 		} else if (found) {
-			return found;
+			if (rc == 1)
+				current = current->right;
+			else
+				return found;
 		} else {
 			current = (rc < 0) ? current->left : current->right;
 		}

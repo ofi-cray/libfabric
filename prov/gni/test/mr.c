@@ -643,11 +643,10 @@ Test(memory_registration_cache, lru_evict_middle_entry)
  * version of what the test rdm_sr::send_autoreg_uncached does under
  * the covers (currently).
  */
-Test(memory_registration_cache, same_addr_incr_size, .disabled=true)
+Test(memory_registration_cache, same_addr_incr_size)
 {
 	int ret;
 	int i;
-	int num_stale = 0;
 
 	for (i = 2; i <= buf_len; i *= 2) {
 		ret = fi_mr_reg(dom, (void *) buf, i, default_access,
@@ -659,20 +658,18 @@ Test(memory_registration_cache, same_addr_incr_size, .disabled=true)
 		cr_assert(cache->state == GNIX_MRC_STATE_READY);
 
 		cr_assert(atomic_get(&cache->inuse.elements) == 1);
-		cr_assert(atomic_get(&cache->stale.elements) == num_stale);
-
-		num_stale++;
+		cr_assert(atomic_get(&cache->stale.elements) <= 1);
 
 		ret = fi_close(&mr->fid);
 		cr_assert(ret == FI_SUCCESS);
 
 		cr_assert(atomic_get(&cache->inuse.elements) == 0);
-		cr_assert(atomic_get(&cache->stale.elements) == num_stale);
+		cr_assert(atomic_get(&cache->stale.elements) == 1);
 	}
 }
 
 /* Same as above, except with decreasing sizes */
-Test(memory_registration_cache, same_addr_decr_size, .disabled=true)
+Test(memory_registration_cache, same_addr_decr_size)
 {
 	int ret;
 	int i;

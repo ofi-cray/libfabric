@@ -256,6 +256,8 @@ typedef struct gnix_mr_cache {
 	struct dlist_entry lru_head;
 	struct gnix_mrce_storage inuse;
 	struct gnix_mrce_storage stale;
+	uint64_t hits;
+	uint64_t misses;
 } gnix_mr_cache_t;
 
 /**

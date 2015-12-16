@@ -397,12 +397,6 @@ void rbtKeyValue(RbtHandle h, RbtIterator it, void **key, void **val) {
     *val = i->val;
 }
 
-void rbtValueReplace(RbtHandle h, RbtIterator it, void *val) {
-	NodeType *i = it;
-
-	i->val = val;
-}
-
 void *rbtTraverseLeft(RbtHandle h, void *key, int(*compare)(void *a, void *b))
 {
 	RbtType *rbt = h;

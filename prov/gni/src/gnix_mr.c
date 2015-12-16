@@ -439,7 +439,16 @@ static inline int __mr_cache_entry_put(
 
 				if (entry->key.length > c_entry->key.length) {
 					/* replace the entry */
-					rbtValueReplace(cache->stale.rb_tree, found, entry);
+					GNIX_INFO(FI_LOG_MR, "replacing stale entry, "
+							"old=%llu:%llu new=%llu:%llu\n",
+							c_entry->key.address, c_entry->key.length,
+							entry->key.address, entry->key.length);
+
+					rc = rbtErase(cache->stale.rb_tree, found);
+					assert(rc == RBT_STATUS_OK);
+
+					rc = rbtInsert(cache->stale.rb_tree, &entry->key, entry);
+					assert(rc == RBT_STATUS_OK);
 
 					/* clean up the old entry */
 					dlist_remove(&c_entry->lru_entry);
@@ -455,6 +464,11 @@ static inline int __mr_cache_entry_put(
 					/* stale entry is larger than this one so lets just
 					 * toss this entry out
 					 */
+					GNIX_INFO(FI_LOG_MR, "larger entry already exists, "
+							"current=%llu:%llu to_destroy=%llu:%llu\n",
+							c_entry->key.address, c_entry->key.length,
+							entry->key.address, entry->key.length);
+
 					grc = __mr_cache_entry_destroy(entry);
 					if (grc != GNI_RC_SUCCESS) {
 						GNIX_ERR(FI_LOG_MR, "failed to destroy a "
@@ -473,11 +487,17 @@ static inline int __mr_cache_entry_put(
 
 					grc = __mr_cache_entry_destroy(entry);
 				} else {
+					GNIX_INFO(FI_LOG_MR, "inserted key=%llu:%llu into stale\n",
+							entry->key.address, entry->key.length);
+
 					__mr_cache_lru_enqueue(cache, entry);
 					atomic_inc(&cache->stale.elements);
 				}
 			}
 		} else {
+			GNIX_INFO(FI_LOG_MR, "destroying entry, key=%llu:%llu\n",
+					entry->key.address, entry->key.length);
+
 			grc = __mr_cache_entry_destroy(entry);
 		}
 
@@ -1079,6 +1099,9 @@ static int __mr_cache_search_stale(
 	 * just return a reference to that existing registration
 	 */
 	if (__can_subsume(mr_key, key)) {
+		GNIX_INFO(FI_LOG_MR,
+				"removing entry from stale and migrating to inuse, "
+				"key=%llu:%llu\n", mr_key->address, mr_key->length);
 		rc = rbtErase(cache->stale.rb_tree, iter);
 		assert(rc == RBT_STATUS_OK);
 
@@ -1098,6 +1121,9 @@ static int __mr_cache_search_stale(
 
 		return FI_SUCCESS;
 	}
+
+	GNIX_INFO(FI_LOG_MR, "could not use matching entry, found=%llu:%llu\n",
+			mr_key->address, mr_key->length);
 
 	return -FI_ENOENT;
 }
@@ -1154,9 +1180,6 @@ static int __mr_cache_create_registration(
 	current_entry->key.length = length;
 	current_entry->flags = 0;
 
-	GNIX_INFO(FI_LOG_MR, "inserting key %llu:%llu into inuse\n",
-			current_entry->key.address, current_entry->key.length);
-
 	rc = rbtInsert(cache->inuse.rb_tree, &current_entry->key,
 			current_entry);
 	if (unlikely(rc != RBT_STATUS_OK)) {
@@ -1176,6 +1199,10 @@ static int __mr_cache_create_registration(
 
 		return -FI_ENOMEM;
 	}
+
+	GNIX_INFO(FI_LOG_MR, "inserted key %llu:%llu into inuse\n",
+			current_entry->key.address, current_entry->key.length);
+
 
 	atomic_inc(&cache->inuse.elements);
 	atomic_initialize(&current_entry->ref_cnt, 1);

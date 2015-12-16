@@ -397,30 +397,6 @@ void rbtKeyValue(RbtHandle h, RbtIterator it, void **key, void **val) {
     *val = i->val;
 }
 
-void *rbtTraverseLeft(RbtHandle h, void *key, int(*compare)(void *a, void *b))
-{
-	RbtType *rbt = h;
-
-	NodeType *current = rbt->root;
-	NodeType *found = NULL;
-	while (current != SENTINEL) {
-		int rc = compare(key, current->key);
-
-		if (rc == 0) {
-			found = current;
-			current = current->left;
-		} else if (found) {
-			if (rc == 1)
-				current = current->right;
-			else
-				return found;
-		} else {
-			current = (rc < 0) ? current->left : current->right;
-		}
-	}
-
-	return found;
-}
 
 void *rbtFind(RbtHandle h, void *key) {
     RbtType *rbt = h;

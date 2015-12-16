@@ -422,22 +422,15 @@ void *rbtTraverseLeft(RbtHandle h, void *key, int(*compare)(void *a, void *b))
 	return found;
 }
 
-void *_rbtFind(RbtHandle h, void *key, int (*compare)(void *a, void *b)) {
+void *rbtFind(RbtHandle h, void *key) {
     RbtType *rbt = h;
 
     NodeType *current;
     current = rbt->root;
     while(current != SENTINEL) {
-        int rc = compare(key, current->key);
+        int rc = rbt->compare(key, current->key);
         if (rc == 0) return current;
         current = (rc < 0) ? current->left : current->right;
     }
     return NULL;
-}
-
-
-void *rbtFind(RbtHandle h, void *key) {
-    RbtType *rbt = h;
-
-    return _rbtFind(h, key, rbt->compare);
 }

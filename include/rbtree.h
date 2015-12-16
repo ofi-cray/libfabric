@@ -87,9 +87,6 @@ RbtIterator rbtEnd(RbtHandle h);
 void rbtKeyValue(RbtHandle h, RbtIterator i, void **key, void **value);
 // returns key/value pair associated with iterator
 
-RbtIterator _rbtFind(RbtHandle h, void *key, int (*compare)(void *a, void *b));
-// returns iterator associated with key using provided compare func
-
 RbtIterator rbtTraverseLeft(RbtHandle h, void *key,
 		int(*compare)(void *a, void *b));
 // returns iterator associated with left-most match. This is useful when a new

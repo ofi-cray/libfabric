@@ -1,3 +1,4 @@
+VERSION {
 FABRIC_1.0 {
 	global:
 		fi_getinfo;
@@ -13,5 +14,9 @@ FABRIC_1.0 {
 		fi_param_get;
 		fi_getparams;
 		fi_freeparams;
+#if FI_DIRECT_ENABLED
+#include "prov/@PROVIDER_DIRECT@/provider.map"
+#endif
 	local: *;
 };
+}

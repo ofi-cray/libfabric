@@ -17,7 +17,7 @@ ACLOCAL_AMFLAGS = -I config
 AM_CFLAGS = -g -Wall
 
 if HAVE_LD_VERSION_SCRIPT
-    libfabric_version_script = -Wl,--version-script=$(srcdir)/libfabric.map
+    libfabric_version_script = -Wl,--script=$(srcdir)/libfabric.map
 else !HAVE_LD_VERSION_SCRIPT
     libfabric_version_script =
 endif !HAVE_LD_VERSION_SCRIPT
@@ -264,6 +264,9 @@ dummy_man_pages = \
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = libfabric.pc
 
+libfabric.map: $(top_srcdir)/libfabric.map.cpp
+	@$(CPP) $(CFLAGS)  -P -C $< -o $@
+
 nroff:
 	@for file in $(real_man_pages); do \
 	    source=`echo $$file | sed -e 's@/man[0-9]@@'`; \
@@ -279,6 +282,11 @@ test:
 
 rpm: dist
 	rpmbuild -ta libfabric-*.tar.bz2
+
+clean-local: clean-local-check
+.PHONY: clean-local-check
+clean-local-check:
+	-rm -f libfabric.map
 
 prov_install_man_pages=
 prov_dist_man_pages=
@@ -296,7 +304,7 @@ man_MANS = $(real_man_pages) $(prov_install_man_pages) $(dummy_man_pages)
 
 EXTRA_DIST = \
         NEWS.md \
-        libfabric.map \
+        libfabric.map.cpp.in \
         libfabric.spec.in \
         config/distscript.pl \
         $(real_man_pages) $(prov_dist_man_pages) $(dummy_man_pages)

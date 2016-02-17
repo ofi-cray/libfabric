@@ -238,9 +238,10 @@ AS_IF([test x"$enable_direct" != x"no"],
 	     [AC_MSG_NOTICE([Only one provider can be chosen when using --enable-direct])
 	     AC_MSG_ERROR(Cannot continue)])])
 
+
 AM_CONDITIONAL([HAVE_DIRECT], [test x"$enable_direct" != x"no"])
 
-AC_CONFIG_FILES([Makefile libfabric.spec])
+AC_CONFIG_FILES([Makefile libfabric.spec libfabric.map.cpp])
 AC_OUTPUT
 
 dnl helpful output

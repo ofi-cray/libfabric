@@ -125,7 +125,8 @@ AC_DEFUN([FI_PROVIDER_SETUP],[
 	AS_IF([test x"$enable_direct" = x"$1"],
 		[AC_MSG_CHECKING(for $srcdir/prov/$1/include/rdma/fi_direct.h)
 		 AS_IF([test -f "$srcdir/prov/$1/include/rdma/fi_direct.h"],
-			[AC_MSG_RESULT(yes)],
+			[AC_MSG_RESULT(yes)
+			CFLAGS="$CFLAGS -DFI_DIRECT_ENABLED"],
 			[AC_MSG_RESULT(no)
 			  AC_MSG_ERROR([$1 provider was requested as direct, but is missing fi_direct.h])]
 			)])

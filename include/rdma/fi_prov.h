@@ -3,6 +3,9 @@
  * Copyright (c) 2005, 2006 Cisco Systems, Inc.  All rights reserved.
  * Copyright (c) 2005 PathScale, Inc.  All rights reserved.
  * Copyright (c) 2013-2014 Intel Corporation. All rights reserved.
+ * Copyright (c) 2015-2016 Cray Inc.  All rights reserved.
+ * Copyright (c) 2015-2016 Los Alamos National Security, LLC. All
+ * rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -128,6 +131,17 @@ fi_param_get_bool(struct fi_provider *provider, const char *param_name, int *val
 	return fi_param_get(provider, param_name, value);
 }
 
+/* Prepend DIRECT_FN to provider specific API functions for global visibility
+ * when using fabric direct.  If the API function is static use the STATIC
+ * macro to bind symbols globally when compiling with fabric direct.
+ */
+#ifdef FI_DIRECT_ENABLED
+#define DIRECT_FN __attribute__((visibility ("default")))
+#define STATIC
+#else
+#define DIRECT_FN
+#define STATIC static
+#endif
 
 #ifdef __cplusplus
 }

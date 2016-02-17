@@ -712,9 +712,10 @@ static inline uint64_t __calculate_length(
 	return pages * pagesize;
 }
 
-int gnix_mr_reg(struct fid *fid, const void *buf, size_t len,
-		uint64_t access, uint64_t offset, uint64_t requested_key,
-		uint64_t flags, struct fid_mr **mr_o, void *context)
+DIRECT_FN int gnix_mr_reg(struct fid *fid, const void *buf, size_t len,
+			  uint64_t access, uint64_t offset,
+			  uint64_t requested_key, uint64_t flags,
+			  struct fid_mr **mr_o, void *context)
 {
 	struct gnix_fid_mem_desc *mr = NULL;
 	int fi_gnix_access = 0;
@@ -851,6 +852,24 @@ static int fi_gnix_mr_close(fid_t fid)
 	}
 
 	return ret;
+}
+
+/**
+ * Associates a registered memory region with a completion counter.
+ *
+ * @param[in] fid		the memory region
+ * @param[in] bfid		the fabric identifier for the memory region
+ * @param[in] flags		flags to apply to the registration
+ *
+ * @return FI_SUCCESS		Upon successfully registering the memory region
+ * @return -FI_ENOSYS		If binding of the memory region is not supported
+ * @return -FI_EBADFLAGS	If the flags are not supported
+ * @return -FI_EKEYREJECTED	If the key is not available
+ * @return -FI_ENOKEY		If the key is already in use
+ */
+DIRECT_FN int gnix_mr_bind(fid_t fid, struct fid *bfid, uint64_t flags)
+{
+	return -FI_ENOSYS;
 }
 
 /**

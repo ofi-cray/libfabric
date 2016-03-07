@@ -207,9 +207,8 @@ DIRECT_FN int gnix_mr_reg(struct fid *fid, const void *buf, size_t len,
 		}
 	}
 
-	reg_addr = ((uint64_t) buf) & ~((1 << GNIX_MR_PAGE_SHIFT) - 1);
-	reg_len = __calculate_length((uint64_t) buf, len,
-			1 << GNIX_MR_PAGE_SHIFT);
+	reg_addr = ((uint64_t) buf);
+	reg_len = len;
 
 	/* call cache register op to retrieve the right entry */
 	fastlock_acquire(&domain->mr_cache_lock);

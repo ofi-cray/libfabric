@@ -1063,7 +1063,7 @@ static int __mr_cache_create_registration(
 			fi_reg_context, cache->attr.reg_context);
 	if (unlikely(!handle)) {
 		free(current_entry);
-		GNIX_WARN(FI_LOG_MR, "failed to register memory with callback");
+		GNIX_WARN(FI_LOG_MR, "failed to register memory with callback\n");
 		return -FI_ENOMEM;
 	}
 

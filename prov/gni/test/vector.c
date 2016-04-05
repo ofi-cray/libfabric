@@ -210,6 +210,11 @@ void do_fill_insert_at()
 void do_remove_first()
 {
 	int ret;
+	void *tmp;
+
+	ret = vec.ops->first(&vec, &tmp);
+	cr_assert(!ret, "_gnix_vec_first");
+	free(tmp);
 
 	ret = vec.ops->remove_first(&vec);
 	cr_assert(!ret, "_gnix_vec_remove_first");
@@ -221,6 +226,11 @@ void do_remove_first()
 void do_remove_last()
 {
 	int ret;
+	void *tmp;
+
+	ret = vec.ops->last(&vec, &tmp);
+	cr_assert(!ret, "_gnix_vec_last");
+	free(tmp);
 
 	ret = vec.ops->remove_last(&vec);
 	cr_assert(!ret, "_gnix_vec_remove_last");
@@ -232,8 +242,13 @@ void do_remove_last()
 void do_unfill_remove_at()
 {
 	int i, ret;
+	void *tmp;
 
 	for (i = 0; i < vec.attr.cur_size; i++) {
+		ret = vec.ops->at(&vec, &tmp, i);
+		cr_assert(!ret, "_gnix_vec_at");
+		free(tmp);
+
 		ret = vec.ops->remove_at(&vec, i);
 		cr_assert(!ret, "_gnix_vec_remove_at");
 	}

@@ -41,11 +41,13 @@
 #include <stdint.h>
 #include <sys/time.h>
 
-#include <rdma/fi_errno.h>
+
 #include <gnix_tags.h>
 #include <gnix.h>
 
 #include <criterion/criterion.h>
+#include <gnix_gnitest_fi_direct.h>
+
 #include <criterion/parameterized.h>
 
 static struct fi_info *hints;

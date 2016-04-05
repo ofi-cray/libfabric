@@ -43,13 +43,7 @@
 #include <limits.h>
 #include <assert.h>
 
-#include <rdma/fabric.h>
-#include <rdma/fi_domain.h>
-#include <rdma/fi_errno.h>
-#include <rdma/fi_endpoint.h>
-#include <rdma/fi_cm.h>
-#include <rdma/fi_atomic.h>
-#include <rdma/fi_tagged.h>
+#include <gnix_gnitest_fi_direct.h>
 #include "fi_ext_gni.h"
 
 #include <stdio.h>
@@ -57,6 +51,7 @@
 #include <inttypes.h>
 
 #include <criterion/criterion.h>
+
 
 #if 1
 #define dbg_printf(...)

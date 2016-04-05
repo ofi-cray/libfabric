@@ -38,6 +38,8 @@
 #include "gnix_mbox_allocator.h"
 
 #include <criterion/criterion.h>
+#include <gnix_gnitest_fi_direct.h>
+
 
 static struct fid_fabric *fab;
 static struct fid_domain *dom;

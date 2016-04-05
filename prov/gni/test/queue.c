@@ -32,11 +32,13 @@
  */
 
 #include <stdlib.h>
-#include <rdma/fabric.h> /* for container_of definition */
+ /* for container_of definition */
 
 #include "gnix_queue.h"
 
 #include <criterion/criterion.h>
+#include <gnix_gnitest_fi_direct.h>
+
 
 struct gnix_queue *queue;
 

@@ -38,6 +38,8 @@
 #include "gnix_freelist.h"
 
 #include <criterion/criterion.h>
+#include <gnix_gnitest_fi_direct.h>
+
 
 static void setup(void)
 {

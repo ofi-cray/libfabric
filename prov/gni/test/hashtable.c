@@ -35,11 +35,13 @@
 #include <stdio.h>
 #include <stdint.h>
 
-#include <rdma/fi_errno.h>
+
 #include <gnix_hashtable.h>
 #include <gnix_bitmap.h>
 
 #include <criterion/criterion.h>
+#include <gnix_gnitest_fi_direct.h>
+
 
 #define __GNIX_MAGIC_VALUE 0xDEADBEEF
 

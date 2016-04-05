@@ -40,11 +40,11 @@
 #include <string.h>
 #include <pthread.h>
 
-#include <rdma/fabric.h>
-#include <rdma/fi_domain.h>
-#include <rdma/fi_errno.h>
-#include <rdma/fi_endpoint.h>
-#include <rdma/fi_cm.h>
+
+
+
+
+
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,6 +56,8 @@
 #include "gnix_rma.h"
 
 #include <criterion/criterion.h>
+#include <gnix_gnitest_fi_direct.h>
+
 
 #if 1
 #define dbg_printf(...)

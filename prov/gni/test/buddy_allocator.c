@@ -34,6 +34,8 @@
 
 #include "gnix_buddy_allocator.h"
 #include <criterion/criterion.h>
+#include <gnix_gnitest_fi_direct.h>
+
 #include <time.h>
 
 #define LEN (1024 * 1024)	/* buddy_handle->len */

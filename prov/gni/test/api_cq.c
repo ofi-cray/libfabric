@@ -43,7 +43,7 @@
 #include <limits.h>
 #include <assert.h>
 
-#include <gnix_gnitest_fi_direct.h>
+#include "gnix_rdma_headers.h"
 #include "fi_ext_gni.h"
 
 #include <stdio.h>

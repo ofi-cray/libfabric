@@ -53,7 +53,7 @@
 #include <inttypes.h>
 
 #include <criterion/criterion.h>
-#include <gnix_gnitest_fi_direct.h>
+#include "gnix_rdma_headers.h"
 
 #include "gnix_util.h"
 #include "gnix.h"

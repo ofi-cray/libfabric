@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2015-2016 Los Alamos National Security, LLC.
- *                         All rights reserved.
+ * Copyright (c) 2016 Los Alamos National Security, LLC. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -31,19 +30,24 @@
  * SOFTWARE.
  */
 
-#ifndef _GNIX_GNITEST_FI_DIRECT_H_
-#define _GNIX_GNITEST_FI_DIRECT_H_
+#ifndef _GNIX_HEADERS_H_
+#define _GNIX_HEADERS_H_
 
 #ifdef FABRIC_DIRECT_ENABLED
 #define FABRIC_DIRECT
-#endif	/* FABRIC_DIRECT */
+#endif	/* FABRIC_DIRECT_ENABLED */
 
 #include <rdma/fabric.h>
-#include <rdma/fi_domain.h>
-#include <rdma/fi_errno.h>
-#include <rdma/fi_endpoint.h>
-#include <rdma/fi_cm.h>
 #include <rdma/fi_atomic.h>
+#include <rdma/fi_cm.h>
+#include <rdma/fi_domain.h>
+#include <rdma/fi_endpoint.h>
+#include <rdma/fi_eq.h>
+#include <rdma/fi_errno.h>
+#include <rdma/fi_log.h>
+#include <rdma/fi_prov.h>
+#include <rdma/fi_rma.h>
 #include <rdma/fi_tagged.h>
+#include <rdma/fi_trigger.h>
 
-#endif /* _GNIX_GNITEST_FI_DIRECT_H_ */
+#endif /* _GNIX_HEADERS_H_ */

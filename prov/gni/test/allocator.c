@@ -38,7 +38,7 @@
 #include "gnix_mbox_allocator.h"
 
 #include <criterion/criterion.h>
-#include <gnix_gnitest_fi_direct.h>
+#include "gnix_rdma_headers.h"
 
 
 static struct fid_fabric *fab;

@@ -47,7 +47,7 @@
 #include "gnix_ep.h"
 
 #include <criterion/criterion.h>
-#include <gnix_gnitest_fi_direct.h>
+#include "gnix_rdma_headers.h"
 
 
 static struct fi_info *hints;

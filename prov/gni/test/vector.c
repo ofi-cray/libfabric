@@ -35,7 +35,7 @@
 #include "gnix_vector.h"
 #include <unistd.h>
 #include <criterion/criterion.h>
-#include <gnix_gnitest_fi_direct.h>
+#include "gnix_rdma_headers.h"
 
 #include <stdlib.h>
 

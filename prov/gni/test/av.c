@@ -36,7 +36,7 @@
 #include <stdlib.h>
 
 #include "fi.h"
-#include <gnix_gnitest_fi_direct.h>
+#include "gnix_rdma_headers.h"
 
 #include "gnix.h"
 #include "gnix_av.h"

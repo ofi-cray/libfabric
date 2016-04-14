@@ -30,8 +30,8 @@
  * SOFTWARE.
  */
 
-#ifndef _GNIX_HEADERS_H_
-#define _GNIX_HEADERS_H_
+#ifndef GNIX_RDMA_HEADERS_H
+#define GNIX_RDMA_HEADERS_H
 
 #ifdef FABRIC_DIRECT_ENABLED
 #define FABRIC_DIRECT
@@ -50,4 +50,4 @@
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_trigger.h>
 
-#endif /* _GNIX_HEADERS_H_ */
+#endif /* GNIX_RDMA_HEADERS_H */

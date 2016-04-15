@@ -41,12 +41,12 @@
 #include <pthread.h>
 #include <sys/time.h>
 
-#include <rdma/fabric.h>
-#include <rdma/fi_domain.h>
-#include <rdma/fi_errno.h>
-#include <rdma/fi_endpoint.h>
-#include <rdma/fi_cm.h>
-#include <rdma/fi_tagged.h>
+
+
+
+
+
+
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,6 +58,8 @@
 #include "gnix_rma.h"
 
 #include <criterion/criterion.h>
+#include "gnix_rdma_headers.h"
+
 
 /* Both the send and recv paths use independent state machines within
  * each test to simulate the behavior you would expect in a client/server

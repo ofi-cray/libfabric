@@ -38,6 +38,8 @@
 #include "gnix_freelist.h"
 
 #include <criterion/criterion.h>
+#include "gnix_rdma_headers.h"
+
 
 static void setup(void)
 {

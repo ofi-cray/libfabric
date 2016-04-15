@@ -35,6 +35,8 @@
 #include "gnix_vector.h"
 #include <unistd.h>
 #include <criterion/criterion.h>
+#include "gnix_rdma_headers.h"
+
 #include <stdlib.h>
 
 gnix_vector_t vec;

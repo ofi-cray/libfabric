@@ -1733,14 +1733,15 @@ static int __gnix_vc_push_work_reqs(struct gnix_vc *vc)
 				continue;
 			}
 
-			/* Work failed.  Reschedule to put this VC
-			 * back on the end of the list and return
-			 * -FI_EAGAIN */
-			__gnix_vc_work_schedule(vc);
 
 			fastlock_acquire(&vc->work_queue_lock);
 			dlist_insert_tail(&req->dlist, &vc->work_queue);
 			fastlock_release(&vc->work_queue_lock);
+
+			/* Work failed.  Reschedule to put this VC
+			 * back on the end of the list and return
+			 * -FI_EAGAIN */
+			__gnix_vc_work_schedule(vc);
 
 			fi_rc = -FI_EAGAIN;
 
@@ -1964,7 +1965,6 @@ static int __gnix_vc_push_tx_reqs(struct gnix_vc *vc)
 			/* Work failed.  Reschedule to put this VC
 			 * back on the end of the list and return
 			 * -FI_EAGAIN. */
-			_gnix_vc_tx_schedule(vc);
 
 			GNIX_INFO(FI_LOG_EP_DATA,
 				  "Failed to push TX request %p: %s\n",
@@ -1985,6 +1985,8 @@ static int __gnix_vc_push_tx_reqs(struct gnix_vc *vc)
 
 			dlist_insert_head(&req->dlist, &vc->tx_queue);
 			atomic_dec(&vc->outstanding_tx_reqs);
+			_gnix_vc_tx_schedule(vc);
+
 			break;
 		}
 

@@ -57,6 +57,7 @@
    fun:_gnix_cm_nic_alloc
    fun:gnix_ep_open
    fun:fi_endpoint
+   fun:fi_getinfo@@FABRIC_1.0
 }
 
 #

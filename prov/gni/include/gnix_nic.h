@@ -50,6 +50,7 @@ extern "C" {
 #include "gnix_util.h"
 
 #define GNIX_DEF_MAX_NICS_PER_PTAG	4
+#define GNIX_N_CQES 64
 
 extern uint32_t gnix_max_nics_per_ptag;
 

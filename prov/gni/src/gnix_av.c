@@ -446,12 +446,12 @@ static int map_insert(struct gnix_fid_av *int_av, const void *addr,
 
 		((struct gnix_address *)fi_addr)[i] = temp.gnix_addr;
 		the_entry =  &blk->base[i];
-		memcpy(&the_entry->gnix_addr, &temp.gnix_addr,
-		       sizeof(struct gnix_address));
+		the_entry->gnix_addr.device_addr = temp.gnix_addr.device_addr;
+		the_entry->gnix_addr.cdm_id = temp.gnix_addr.cdm_id;
 		the_entry->name_type = temp.name_type;
 		the_entry->cm_nic_cdm_id = temp.cm_nic_cdm_id;
 		the_entry->cookie = temp.cookie;
-		memcpy(&key, &temp.gnix_addr, sizeof(gnix_ht_key_t));
+		key = *((gnix_ht_key_t *) &temp.gnix_addr);
 		ret = _gnix_ht_insert(int_av->map_ht,
 				      key,
 				      the_entry);
@@ -663,8 +663,8 @@ DIRECT_FN STATIC int gnix_av_lookup(struct fid_av *av, fi_addr_t fi_addr,
 		return rc;
 	}
 
-	memcpy(&ep_name.gnix_addr, &entry->gnix_addr,
-	       sizeof(struct gnix_address));
+	ep_name.gnix_addr.device_addr = entry->gnix_addr.device_addr;
+	ep_name.gnix_addr.cdm_id = entry->gnix_addr.cdm_id;
 	ep_name.name_type = entry->name_type;
 	ep_name.cm_nic_cdm_id = entry->cm_nic_cdm_id;
 	ep_name.cookie = entry->cookie;

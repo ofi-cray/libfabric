@@ -66,7 +66,7 @@ static struct gnix_fab_req *__gnix_msg_dup_req(struct gnix_fab_req *req)
 	}
 
 	/* TODO: selectively copy fields. */
-	memcpy((void *)new_req, (void *)req, sizeof(*req));
+	*new_req = *req;
 
 	return new_req;
 }
@@ -1680,4 +1680,3 @@ err_get_vc:
 	}
 	return ret;
 }
-

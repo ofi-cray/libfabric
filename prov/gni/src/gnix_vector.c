@@ -102,7 +102,12 @@ static inline int __gnix_vec_create(gnix_vector_t *vec, gnix_vec_attr_t *attr)
 		attr->cur_size = attr->vec_initial_size;
 	}
 
-	memcpy(&vec->attr, attr, sizeof(gnix_vec_attr_t));
+	vec->attr.vec_initial_size = attr->vec_initial_size;
+	vec->attr.cur_size = attr->cur_size;
+	vec->attr.vec_maximum_size = attr->vec_maximum_size;
+	vec->attr.vec_increase_step = attr->vec_increase_step;
+	vec->attr.vec_increase_type = attr->vec_increase_type;
+	vec->attr.vec_internal_locking = attr->vec_internal_locking;
 
 	return FI_SUCCESS;
 }

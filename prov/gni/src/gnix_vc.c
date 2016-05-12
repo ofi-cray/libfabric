@@ -2243,12 +2243,21 @@ int _gnix_vc_ep_get_vc(struct gnix_fid_ep *ep, fi_addr_t dest_addr,
 	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
 	if (GNIX_EP_RDM_DGM(ep->type)) {
+		if (ep->last_vc) {
+			if (ep->last_vc->peer_fi_addr == dest_addr) {
+				*vc_ptr = ep->last_vc;
+				return FI_SUCCESS;
+			}
+		}
+
 		ret = __gnix_vc_get_vc_by_fi_addr(ep, dest_addr, vc_ptr);
 		if (unlikely(ret != FI_SUCCESS)) {
 			GNIX_WARN(FI_LOG_EP_DATA,
 				  "__gnix_vc_get_vc_by_fi_addr returned %s\n",
 				   fi_strerror(-ret));
 			return ret;
+		} else {
+			ep->last_vc = *vc_ptr;
 		}
 	} else if (ep->type == FI_EP_MSG) {
 		*vc_ptr = ep->vc;

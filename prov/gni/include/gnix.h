@@ -407,6 +407,7 @@ struct gnix_fid_ep {
 	struct gnix_freelist fr_freelist;
 	struct gnix_reference ref_cnt;
 	struct gnix_fid_ep_ops_en ep_ops;
+	struct gnix_vc *last_vc;
 };
 
 #define GNIX_EP_RDM(type)         (type == FI_EP_RDM)

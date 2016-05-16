@@ -254,14 +254,14 @@ err:
  *                  originating EP for this connection)
  * - src_irq_cq_mhdl (GNI memory handle for irq cq for originating EP)
  */
-static void __gnix_vc_pack_conn_req(char *sbuf,
-				    struct gnix_address *target_addr,
-				    struct gnix_address *src_addr,
-				    int src_vc_id,
-				    uint64_t src_vc_vaddr,
-				    gni_smsg_attr_t *src_smsg_attr,
-				    gni_mem_handle_t *src_irq_cq_mhdl,
-				    uint64_t caps)
+static inline void __gnix_vc_pack_conn_req(char *sbuf,
+					   struct gnix_address *target_addr,
+					   struct gnix_address *src_addr,
+					   int src_vc_id,
+					   uint64_t src_vc_vaddr,
+					   gni_smsg_attr_t *src_smsg_attr,
+					   gni_mem_handle_t *src_irq_cq_mhdl,
+					   uint64_t caps)
 {
 	size_t __attribute__((unused)) len;
 	char *cptr = sbuf;
@@ -281,34 +281,34 @@ static void __gnix_vc_pack_conn_req(char *sbuf,
 	      sizeof(gni_mem_handle_t);
 	assert(len <= GNIX_CM_NIC_MAX_MSG_SIZE);
 
-	memcpy(cptr, &rtype, sizeof(rtype));
+	*((uint8_t *)cptr) = rtype;
 	cptr += sizeof(rtype);
-	memcpy(cptr, target_addr, sizeof(struct gnix_address));
+	*((struct gnix_address *) cptr) = *target_addr;
 	cptr += sizeof(struct gnix_address);
-	memcpy(cptr, src_addr, sizeof(struct gnix_address));
+	*((struct gnix_address *) cptr) = *src_addr;
 	cptr += sizeof(struct gnix_address);
-	memcpy(cptr, &src_vc_id, sizeof(int));
+	*((int *) cptr) = src_vc_id;
 	cptr += sizeof(int);
-	memcpy(cptr, &src_vc_vaddr, sizeof(uint64_t));
+	*((uint64_t *) cptr) = src_vc_vaddr;
 	cptr += sizeof(uint64_t);
-	memcpy(cptr, src_smsg_attr, sizeof(gni_smsg_attr_t));
+	*((gni_smsg_attr_t *) cptr) = *src_smsg_attr;
 	cptr += sizeof(gni_smsg_attr_t);
-	memcpy(cptr, src_irq_cq_mhdl, sizeof(gni_mem_handle_t));
+	*((gni_mem_handle_t *) cptr) = *src_irq_cq_mhdl;
 	cptr += sizeof(gni_mem_handle_t);
-	memcpy(cptr, &caps, sizeof(uint64_t));
+	*((uint64_t *) cptr) = caps;
 }
 
 /*
  * unpack a connection request message
  */
-static void __gnix_vc_unpack_conn_req(char *rbuf,
-				      struct gnix_address *target_addr,
-				      struct gnix_address *src_addr,
-				      int *src_vc_id,
-				      uint64_t *src_vc_vaddr,
-				      gni_smsg_attr_t *src_smsg_attr,
-				      gni_mem_handle_t *src_irq_cq_mhndl,
-				      uint64_t *caps)
+static inline void __gnix_vc_unpack_conn_req(char *rbuf,
+					     struct gnix_address *target_addr,
+					     struct gnix_address *src_addr,
+					     int *src_vc_id,
+					     uint64_t *src_vc_vaddr,
+					     gni_smsg_attr_t *src_smsg_attr,
+					     gni_mem_handle_t *src_irq_cq_mhndl,
+					     uint64_t *caps)
 {
 	size_t __attribute__((unused)) len;
 	char *cptr = rbuf;
@@ -320,19 +320,19 @@ static void __gnix_vc_unpack_conn_req(char *rbuf,
 	assert(rbuf);
 
 	cptr += sizeof(uint8_t);
-	memcpy(target_addr, cptr, sizeof(struct gnix_address));
+	*target_addr = 	*((struct gnix_address *) cptr);
 	cptr += sizeof(struct gnix_address);
-	memcpy(src_addr, cptr, sizeof(struct gnix_address));
+	*src_addr = *((struct gnix_address *) cptr);
 	cptr += sizeof(struct gnix_address);
-	memcpy(src_vc_id, cptr, sizeof(int));
+	*src_vc_id = *((int *) cptr);
 	cptr += sizeof(int);
-	memcpy(src_vc_vaddr, cptr, sizeof(uint64_t));
+	*src_vc_vaddr = *((uint64_t *) cptr);
 	cptr += sizeof(uint64_t);
-	memcpy(src_smsg_attr, cptr, sizeof(gni_smsg_attr_t));
+	*src_smsg_attr = *((gni_smsg_attr_t *) cptr);
 	cptr += sizeof(gni_smsg_attr_t);
-	memcpy(src_irq_cq_mhndl, cptr, sizeof(gni_mem_handle_t));
+	*src_irq_cq_mhndl = *((gni_mem_handle_t *) cptr);
 	cptr += sizeof(gni_mem_handle_t);
-	memcpy(caps, cptr, sizeof(uint64_t));
+	*caps = *((uint64_t *) cptr);
 }
 
 /*
@@ -346,13 +346,13 @@ static void __gnix_vc_unpack_conn_req(char *rbuf,
  * - resp_irq_cq_mhndl (GNI memhndl for irq cq of responding EP)
  */
 
-static void __gnix_vc_pack_conn_resp(char *sbuf,
-				     uint64_t src_vc_vaddr,
-				     uint64_t resp_vc_vaddr,
-				     int resp_vc_id,
-				     gni_smsg_attr_t *resp_smsg_attr,
-				     gni_mem_handle_t *resp_irq_cq_mhndl,
-				     uint64_t caps)
+static inline void __gnix_vc_pack_conn_resp(char *sbuf,
+					    uint64_t src_vc_vaddr,
+					    uint64_t resp_vc_vaddr,
+					    int resp_vc_id,
+					    gni_smsg_attr_t *resp_smsg_attr,
+					    gni_mem_handle_t *resp_irq_cq_mhndl,
+					    uint64_t caps)
 {
 	size_t __attribute__((unused)) len;
 	char *cptr = sbuf;
@@ -371,54 +371,53 @@ static void __gnix_vc_pack_conn_resp(char *sbuf,
 	      sizeof(gni_mem_handle_t);
 	assert(len <= GNIX_CM_NIC_MAX_MSG_SIZE);
 
-	memcpy(cptr, &rtype, sizeof(rtype));
+	*((uint8_t *)cptr) = rtype;
 	cptr += sizeof(rtype);
-	memcpy(cptr, &src_vc_vaddr, sizeof(uint64_t));
+	*((uint64_t *) cptr) = src_vc_vaddr;
 	cptr += sizeof(uint64_t);
-	memcpy(cptr, &resp_vc_vaddr, sizeof(uint64_t));
+	*((uint64_t *) cptr) = resp_vc_vaddr;
 	cptr += sizeof(uint64_t);
-	memcpy(cptr, &resp_vc_id, sizeof(int));
+	*((int *) cptr) = resp_vc_id;
 	cptr += sizeof(int);
-	memcpy(cptr, resp_smsg_attr, sizeof(gni_smsg_attr_t));
+	*((gni_smsg_attr_t *) cptr) = *resp_smsg_attr;
 	cptr += sizeof(gni_smsg_attr_t);
-	memcpy(cptr, resp_irq_cq_mhndl, sizeof(gni_mem_handle_t));
+	*((gni_mem_handle_t *) cptr) = *resp_irq_cq_mhndl;
 	cptr += sizeof(gni_mem_handle_t);
-	memcpy(cptr, &caps, sizeof(uint64_t));
+	*((uint64_t *) cptr) = caps;
 }
 
 /*
  * unpack a connection request response
  */
-static void __gnix_vc_unpack_resp(char *rbuf,
-				  uint64_t *src_vc_vaddr,
-				  uint64_t *resp_vc_vaddr,
-				  int *resp_vc_id,
-				  gni_smsg_attr_t *resp_smsg_attr,
-				  gni_mem_handle_t *resp_irq_cq_mhndl,
-				  uint64_t *caps)
+static inline void __gnix_vc_unpack_resp(char *rbuf,
+					 uint64_t *src_vc_vaddr,
+					 uint64_t *resp_vc_vaddr,
+					 int *resp_vc_id,
+					 gni_smsg_attr_t *resp_smsg_attr,
+					 gni_mem_handle_t *resp_irq_cq_mhndl,
+					 uint64_t *caps)
 {
 	char *cptr = rbuf;
 
 	cptr += sizeof(uint8_t);
-
-	memcpy(src_vc_vaddr, cptr, sizeof(uint64_t));
+	*src_vc_vaddr = *((uint64_t *) cptr);
 	cptr += sizeof(uint64_t);
-	memcpy(resp_vc_vaddr, cptr, sizeof(uint64_t));
+	*resp_vc_vaddr = *((uint64_t *) cptr);
 	cptr += sizeof(uint64_t);
-	memcpy(resp_vc_id, cptr, sizeof(int));
+	*resp_vc_id = *((int *) cptr);
 	cptr += sizeof(int);
-	memcpy(resp_smsg_attr, cptr, sizeof(gni_smsg_attr_t));
+	*resp_smsg_attr = *((gni_smsg_attr_t *) cptr);
 	cptr += sizeof(gni_smsg_attr_t);
-	memcpy(resp_irq_cq_mhndl, cptr, sizeof(gni_mem_handle_t));
+	*resp_irq_cq_mhndl = *((gni_mem_handle_t *) cptr);
 	cptr += sizeof(gni_mem_handle_t);
-	memcpy(caps, cptr, sizeof(uint64_t));
+	*caps = *((uint64_t *) cptr);
 }
 
-static void __gnix_vc_get_msg_type(char *rbuf,
-				  uint8_t *rtype)
+static inline void __gnix_vc_get_msg_type(char *rbuf,
+					  uint8_t *rtype)
 {
 	assert(rtype);
-	memcpy(rtype, rbuf, sizeof(uint8_t));
+	*rtype = *((uint8_t *) rbuf);
 }
 
 /*
@@ -955,9 +954,11 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 			ret = -FI_ENOMEM;
 			goto err;
 		}
+
 		memcpy(&data->src_smsg_attr,
 		       &src_smsg_attr,
 		       sizeof(src_smsg_attr));
+		/* data->src_smsg_attr = src_smsg_attr; */
 		data->vc = vc;
 		data->src_vc_id = src_vc_id;
 		data->src_vc_ptr = src_vc_ptr;
@@ -1398,9 +1399,9 @@ int _gnix_vc_alloc(struct gnix_fid_ep *ep_priv,
 
 	vc_ptr->conn_state = GNIX_VC_CONN_NONE;
 	if (entry) {
-		memcpy(&vc_ptr->peer_addr,
-			&entry->gnix_addr,
-			sizeof(struct gnix_address));
+		vc_ptr->peer_addr.device_addr = entry->gnix_addr.device_addr;
+		vc_ptr->peer_addr.cdm_id = entry->gnix_addr.cdm_id;
+
 		vc_ptr->peer_cm_nic_addr.device_addr =
 			entry->gnix_addr.device_addr;
 		vc_ptr->peer_cm_nic_addr.cdm_id =

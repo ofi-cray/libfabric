@@ -933,7 +933,7 @@ int _gnix_mr_cache_init(
 		return -FI_ENOMEM;
 
 	/* save the attribute values */
-	memcpy(&cache_p->attr, cache_attr, sizeof(*cache_attr));
+	cache_p->attr = *cache_attr;
 
 	/* list is used because entries can be removed from the stale list if
 	 *   a user might call register on a stale entry's memory region
@@ -1551,4 +1551,3 @@ int _gnix_mr_cache_deregister(
 
 	return gnixu_to_fi_errno(grc);
 }
-

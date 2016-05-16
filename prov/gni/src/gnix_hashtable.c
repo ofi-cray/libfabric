@@ -623,7 +623,14 @@ int _gnix_ht_init(gnix_hashtable_t *ht, gnix_hashtable_attr_t *attr)
 	if (ht->ht_state == GNIX_HT_STATE_READY)
 		return -FI_EINVAL;
 
-	memcpy(&ht->ht_attr, tbl_attr, sizeof(gnix_hashtable_attr_t));
+	ht->ht_attr.ht_initial_size = tbl_attr->ht_initial_size;
+	ht->ht_attr.ht_maximum_size = tbl_attr->ht_maximum_size;
+	ht->ht_attr.ht_increase_step = tbl_attr->ht_increase_step;
+	ht->ht_attr.ht_increase_type = tbl_attr->ht_increase_type;
+	ht->ht_attr.ht_collision_thresh = tbl_attr->ht_collision_thresh;
+	ht->ht_attr.ht_hash_seed = tbl_attr->ht_hash_seed;
+	ht->ht_attr.ht_internal_locking = tbl_attr->ht_internal_locking;
+	ht->ht_attr.destructor = tbl_attr->destructor;
 	ht->ht_size = ht->ht_attr.ht_initial_size;
 
 	if (ht->ht_attr.ht_internal_locking)

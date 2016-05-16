@@ -509,7 +509,7 @@ DIRECT_FN STATIC ssize_t gnix_cq_readfrom(struct fid_cq *cq, void *buf,
 		assert(event->the_entry);
 		memcpy(buf, event->the_entry, cq_priv->entry_size);
 		if (src_addr)
-			memcpy(src_addr, &event->src_addr, sizeof(fi_addr_t));
+			*src_addr = event->src_addr;
 
 		_gnix_queue_enqueue_free(cq_priv->events, &event->item);
 
@@ -592,7 +592,7 @@ DIRECT_FN STATIC ssize_t gnix_cq_readerr(struct fid_cq *cq,
 
 	event = container_of(entry, struct gnix_cq_entry, item);
 
-	memcpy(buf, event->the_entry, sizeof(struct fi_cq_err_entry));
+	*buf = *((struct fi_cq_err_entry *) event->the_entry);
 
 	_gnix_queue_enqueue_free(cq_priv->errors, &event->item);
 

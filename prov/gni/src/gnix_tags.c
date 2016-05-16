@@ -475,7 +475,8 @@ int _gnix_tag_storage_init(
 
 
 	/* copy attributes */
-	memcpy(&ts->attr, attributes, sizeof(struct gnix_tag_storage_attr));
+	ts->attr.type = attributes->type;
+	ts->attr.use_src_addr_matching = attributes->use_src_addr_matching;
 
 	switch (ts->attr.type) {
 	case GNIX_TAG_AUTOSELECT:

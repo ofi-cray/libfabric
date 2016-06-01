@@ -1300,7 +1300,7 @@ static int __gnix_vc_conn_req_prog_fn(void *data, int *complete_ptr)
 
 	/*
 	 * prep the smsg_mbox_attr
-     */
+	 */
 
 	smsg_mbox_attr.msg_type = GNI_SMSG_TYPE_MBOX_AUTO_RETRANSMIT;
 	smsg_mbox_attr.msg_buffer = mbox->base;

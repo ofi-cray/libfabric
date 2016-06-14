@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2013-2014 Intel Corporation. All rights reserved.
+ * Copyright (c) 2016 Cray Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -54,8 +55,10 @@ extern "C" {
 
 #if ENABLE_DEBUG
 #define ATOMIC_IS_INITIALIZED(atomic) assert(atomic->is_initialized)
+#define ATOMIC_IS_NEGATIVE(val) assert((val) >= 0)
 #else
 #define ATOMIC_IS_INITIALIZED(atomic)
+#define ATOMIC_IS_NEGATIVE(val)
 #endif
 
 #ifdef HAVE_ATOMICS
@@ -75,12 +78,14 @@ static inline int atomic_inc(atomic_t *atomic)
 static inline int atomic_dec(atomic_t *atomic)
 {
 	ATOMIC_IS_INITIALIZED(atomic);
+	ATOMIC_IS_NEGATIVE(atomic->val - 1);
 	return atomic_fetch_sub_explicit(&atomic->val, 1, memory_order_acq_rel) - 1;
 }
 
 static inline int atomic_set(atomic_t *atomic, int value)
 {
 	ATOMIC_IS_INITIALIZED(atomic);
+	ATOMIC_IS_NEGATIVE(value);
 	atomic_store(&atomic->val, value);
 	return value;
 }
@@ -95,6 +100,7 @@ static inline int atomic_get(atomic_t *atomic)
 static inline void atomic_initialize(atomic_t *atomic, int value)
 {
 	atomic_init(&atomic->val, value);
+	ATOMIC_IS_NEGATIVE(value);
 #if ENABLE_DEBUG
 	atomic->is_initialized = 1;
 #endif
@@ -110,6 +116,7 @@ static inline int atomic_add(atomic_t *atomic, int val)
 static inline int atomic_sub(atomic_t *atomic, int val)
 {
 	ATOMIC_IS_INITIALIZED(atomic);
+	ATOMIC_IS_NEGATIVE(atomic->val - val);
 	return atomic_fetch_sub_explicit(&atomic->val,
 			val, memory_order_acq_rel) - 1;
 }
@@ -142,6 +149,7 @@ static inline int atomic_dec(atomic_t *atomic)
 	ATOMIC_IS_INITIALIZED(atomic);
 	fastlock_acquire(&atomic->lock);
 	v = --(atomic->val);
+	ATOMIC_IS_NEGATIVE(v);
 	fastlock_release(&atomic->lock);
 	return v;
 }
@@ -151,6 +159,7 @@ static inline int atomic_set(atomic_t *atomic, int value)
 	ATOMIC_IS_INITIALIZED(atomic);
 	fastlock_acquire(&atomic->lock);
 	atomic->val = value;
+	ATOMIC_IS_NEGATIVE(value);
 	fastlock_release(&atomic->lock);
 	return value;
 }
@@ -191,6 +200,7 @@ static inline int atomic_sub(atomic_t *atomic, int val)
 	fastlock_acquire(&atomic->lock);
 	atomic->val -= val;
 	v = atomic->val;
+	ATOMIC_IS_NEGATIVE(v);
 	fastlock_release(&atomic->lock);
 	return v;
 }

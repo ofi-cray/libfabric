@@ -682,10 +682,16 @@ static int __gnix_vc_connect_to_self(struct gnix_vc *vc)
 	vc->peer_irq_mem_hndl = ep->nic->irq_mem_hndl;
 
 	ret = _gnix_vc_schedule(vc);
-	if (ret != FI_SUCCESS)
+	if (ret == FI_SUCCESS) {
+		/*
+		 * give the TX queue a push
+		 */
+		ret = __gnix_vc_push_tx_reqs(vc);
+	} else {
 		GNIX_WARN(FI_LOG_EP_DATA,
 			  "_gnix_vc_schedule returned %s\n",
 			  fi_strerror(-ret));
+	}
 
 	GNIX_DEBUG(FI_LOG_EP_CTRL, "moving vc %p state to connected\n", vc);
 	return ret;
@@ -798,10 +804,17 @@ static int __gnix_vc_hndl_conn_resp(struct gnix_cm_nic *cm_nic,
 	COND_RELEASE(ep->requires_lock, &ep->vc_lock);
 
 	ret = _gnix_vc_schedule(vc);
-	if (ret != FI_SUCCESS)
+	if (ret == FI_SUCCESS) {
+		/*
+		 * give the TX queue a push
+		 */
+		ret = __gnix_vc_push_tx_reqs(vc);
+	} else {
 		GNIX_WARN(FI_LOG_EP_DATA,
 			  "_gnix_vc_schedule returned %s\n",
 			  fi_strerror(-ret));
+	}
+
 
 	return ret;
 err:
@@ -1039,10 +1052,16 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 		COND_RELEASE(ep->requires_lock, &ep->vc_lock);
 
 		ret = _gnix_vc_schedule(vc);
-		if (ret != FI_SUCCESS)
+		if (ret == FI_SUCCESS) {
+			/*
+			 * give the TX queue a push
+			 */
+			ret = __gnix_vc_push_tx_reqs(vc);
+		} else {
 			GNIX_WARN(FI_LOG_EP_DATA,
 				  "_gnix_vc_schedule returned %s\n",
 				  fi_strerror(-ret));
+		}
 
 		ret = _gnix_cm_nic_progress(cm_nic);
 		if (ret != FI_SUCCESS)
@@ -1240,10 +1259,16 @@ static int __gnix_vc_conn_ack_prog_fn(void *data, int *complete_ptr)
 			   "moving vc %p to connected\n",vc);
 		vc->modes |= GNIX_VC_MODE_DG_POSTED;
 		ret = _gnix_vc_schedule(vc);
-		if (ret != FI_SUCCESS)
+		if (ret == FI_SUCCESS) {
+			/*
+			 * give the TX queue a push
+			 */
+			ret = __gnix_vc_push_tx_reqs(vc);
+		} else {
 			GNIX_WARN(FI_LOG_EP_DATA,
 				  "_gnix_vc_schedule returned %s\n",
 				  fi_strerror(-ret));
+		}
 
 	} else if (ret == -FI_EAGAIN) {
 		ret = _gnix_vc_schedule(vc);

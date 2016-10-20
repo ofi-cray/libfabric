@@ -43,6 +43,7 @@
 #include "gnix_nic.h"
 #include "gnix_util.h"
 #include "gnix_xpmem.h"
+#include "gnix_vc.h"
 
 gni_cq_mode_t gnix_def_gni_cq_modes = GNI_CQ_PHYS_PAGES;
 

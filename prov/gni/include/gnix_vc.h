@@ -111,7 +111,7 @@ enum gnix_vc_conn_req_type {
  * @var peer_id              vc_id of peer.
  * @var modes                Used internally to track current state of
  *                           the VC not pertaining to the connection state.
- * @var flags                Bitmap used to hold vc schedule state
+ * @var flags                field used to hold vc schedule state
  * @var peer_irq_mem_hndl    peer GNI memhndl used for delivering
  *                           GNI_PostCqWrite requests to remote peer
  */
@@ -140,7 +140,7 @@ struct gnix_vc {
 	int vc_id;
 	int peer_id;
 	int modes;
-	gnix_bitmap_t flags; /* We're missing regular bit ops */
+	uint64_t flags;
 	gni_mem_handle_t peer_irq_mem_hndl;
 	xpmem_apid_t peer_apid;
 	uint64_t peer_caps;

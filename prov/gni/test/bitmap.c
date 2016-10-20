@@ -50,34 +50,9 @@
 gnix_bitmap_t *test_bitmap = NULL;
 int call_free_bitmap = 0;
 
-#if HAVE_ATOMICS
-
 #define __gnix_set_block(bitmap, index, value) \
 	atomic_store(&(bitmap)->arr[(index)], (value))
 #define __gnix_load_block(bitmap, index) atomic_load(&(bitmap->arr[(index)]))
-#else
-static inline void __gnix_set_block(gnix_bitmap_t *bitmap, int index,
-		uint64_t value)
-{
-	gnix_bitmap_block_t *block = &bitmap->arr[index];
-
-	fastlock_acquire(&block->lock);
-	block->val = value;
-	fastlock_release(&block->lock);
-}
-
-static inline uint64_t __gnix_load_block(gnix_bitmap_t *bitmap, int index)
-{
-	gnix_bitmap_block_t *block = &bitmap->arr[index];
-	uint64_t ret;
-
-	fastlock_acquire(&block->lock);
-	ret = block->val;
-	fastlock_release(&block->lock);
-
-	return ret;
-}
-#endif
 
 void __gnix_bitmap_test_setup(void)
 {

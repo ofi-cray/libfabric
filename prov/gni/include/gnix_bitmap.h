@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2015 Cray Inc. All rights reserved.
+ * Copyright (c) 2016 Los Alamos National Security, LLC. All rights reserved.
  *
  *  Created on: Apr 16, 2015
  *      Author: jswaro
@@ -26,16 +27,7 @@
 
 typedef uint64_t gnix_bitmap_value_t;
 
-#ifdef HAVE_ATOMICS
-#include <stdatomic.h>
-
 typedef atomic_uint_fast64_t gnix_bitmap_block_t;
-#else
-typedef struct atomic_uint64_t {
-	fastlock_t lock;
-	gnix_bitmap_value_t val;
-} gnix_bitmap_block_t;
-#endif
 
 typedef enum gnix_bitmap_state {
 	GNIX_BITMAP_STATE_UNINITIALIZED = 0,

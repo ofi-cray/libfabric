@@ -10,8 +10,6 @@
 
 #include "gnix_bitmap.h"
 
-#ifdef HAVE_ATOMICS
-
 #define __gnix_init_block(block) atomic_init(block, 0)
 #define __gnix_set_block(bitmap, index, value) \
 	atomic_store(&(bitmap)->arr[(index)], (value))
@@ -25,74 +23,6 @@
 #define __gnix_test_bit(bitmap, bit) \
 	((atomic_load(&(bitmap)->arr[GNIX_BUCKET_INDEX(bit)]) \
 			& GNIX_BIT_VALUE(bit)) != 0)
-#else
-
-static inline void __gnix_init_block(gnix_bitmap_block_t *block)
-{
-	fastlock_init(&block->lock);
-	block->val = 0llu;
-}
-
-static inline void __gnix_set_block(gnix_bitmap_t *bitmap, int index,
-		uint64_t value)
-{
-	gnix_bitmap_block_t *block = &bitmap->arr[index];
-
-	fastlock_acquire(&block->lock);
-	block->val = value;
-	fastlock_release(&block->lock);
-}
-
-static inline uint64_t __gnix_load_block(gnix_bitmap_t *bitmap, int index)
-{
-	gnix_bitmap_block_t *block = &bitmap->arr[index];
-	uint64_t ret;
-
-	fastlock_acquire(&block->lock);
-	ret = block->val;
-	fastlock_release(&block->lock);
-
-	return ret;
-}
-
-static inline uint64_t __gnix_set_bit(gnix_bitmap_t *bitmap, int bit)
-{
-	gnix_bitmap_block_t *block = &bitmap->arr[GNIX_BUCKET_INDEX(bit)];
-	uint64_t ret;
-
-	fastlock_acquire(&block->lock);
-	ret = block->val;
-	block->val |= GNIX_BIT_VALUE(bit);
-	fastlock_release(&block->lock);
-
-	return ret;
-}
-
-static inline uint64_t __gnix_clear_bit(gnix_bitmap_t *bitmap, int bit)
-{
-	gnix_bitmap_block_t *block = &bitmap->arr[GNIX_BUCKET_INDEX(bit)];
-	uint64_t ret;
-
-	fastlock_acquire(&block->lock);
-	ret = block->val;
-	block->val &= ~GNIX_BIT_VALUE(bit);
-	fastlock_release(&block->lock);
-
-	return ret;
-}
-
-static inline int __gnix_test_bit(gnix_bitmap_t *bitmap, int bit)
-{
-	gnix_bitmap_block_t *block = &bitmap->arr[GNIX_BUCKET_INDEX(bit)];
-	int ret;
-
-	fastlock_acquire(&block->lock);
-	ret = (block->val & GNIX_BIT_VALUE(bit)) != 0;
-	fastlock_release(&block->lock);
-
-	return ret;
-}
-#endif
 
 int _gnix_test_bit(gnix_bitmap_t *bitmap, uint32_t index)
 {

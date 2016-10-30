@@ -53,6 +53,14 @@
 #include "gnix_trigger.h"
 #include "gnix_vector.h"
 #include "gnix_xpmem.h"
+#include "gnix_freelist.h"
+
+#define __gnix_vc_set_bit(flags, bit) \
+	atomic_fetch_or((flags), (1UL << (bit)))
+#define __gnix_vc_test_and_set_bit(flags, bit) \
+	(__gnix_vc_set_bit(flags, bit) & (1UL << (bit)))
+#define __gnix_vc_clear_bit(flags, bit) \
+	atomic_fetch_and((flags), ~(1UL << (bit)))
 
 /*
  * forward declarations and local struct defs.
@@ -1422,6 +1430,7 @@ int _gnix_vc_alloc(struct gnix_fid_ep *ep_priv,
 	struct gnix_vc *vc_ptr = NULL;
 	struct gnix_cm_nic *cm_nic = NULL;
 	struct gnix_nic *nic = NULL;
+	struct dlist_entry *de;
 
 	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
 
@@ -1433,9 +1442,17 @@ int _gnix_vc_alloc(struct gnix_fid_ep *ep_priv,
 	if (cm_nic == NULL)
 		return -FI_EINVAL;
 
-	vc_ptr = calloc(1, sizeof(*vc_ptr));
-	if (!vc_ptr)
-		return -FI_ENOMEM;
+	/*
+	 * allocate VC from domain's vc_freelist
+	 */
+
+	ret = _gnix_fl_alloc(&de, &nic->vc_freelist);
+	while (ret == -FI_EAGAIN)
+		ret = _gnix_fl_alloc(&de, &nic->vc_freelist);
+	if (ret == FI_SUCCESS) {
+		vc_ptr = container_of(de, struct gnix_vc, fr_list);
+	} else
+		return ret;
 
 	vc_ptr->conn_state = GNIX_VC_CONN_NONE;
 	if (entry) {
@@ -1464,10 +1481,9 @@ int _gnix_vc_alloc(struct gnix_fid_ep *ep_priv,
 	vc_ptr->peer_fi_addr = FI_ADDR_NOTAVAIL;
 
 	dlist_init(&vc_ptr->list);
+	dlist_init(&vc_ptr->fr_list);
 
 	atomic_initialize(&vc_ptr->outstanding_tx_reqs, 0);
-	ret = _gnix_alloc_bitmap(&vc_ptr->flags, 1);
-	assert(!ret);
 
 	/*
 	 * we need an id for the vc to allow for quick lookup
@@ -1531,10 +1547,34 @@ int _gnix_vc_destroy(struct gnix_vc *vc)
 	}
 
 	/*
+	 * if send_q not empty, return -FI_EBUSY
+	 * Note for FI_EP_MSG type eps, this behavior
+	 * may not be correct for handling fi_shutdown.
+	 */
+
+	if (!dlist_empty(&vc->tx_queue)) {
+		GNIX_WARN(FI_LOG_EP_CTRL, "VC TX queue not empty\n");
+		return -FI_EBUSY;
+	}
+
+	if (atomic_get(&vc->outstanding_tx_reqs)) {
+		GNIX_WARN(FI_LOG_EP_CTRL,
+			   "VC outstanding_tx_reqs out of sync: %d\n",
+			   atomic_get(&vc->outstanding_tx_reqs));
+		return -FI_EBUSY;
+	}
+
+	/*
 	 * move vc state to terminating
 	 */
 
 	vc->conn_state = GNIX_VC_CONN_TERMINATING;
+
+	ret = _gnix_nic_free_rem_id(nic, vc->vc_id);
+	if (ret != FI_SUCCESS)
+		GNIX_WARN(FI_LOG_EP_CTRL,
+		      "__gnix_vc_free_id returned %s\n",
+		      fi_strerror(-ret));
 
 	/*
 	 * try to unbind the gni_ep if non-NULL.
@@ -1588,20 +1628,6 @@ int _gnix_vc_destroy(struct gnix_vc *vc)
 	}
 	 */
 
-	/*
-	 * if send_q not empty, return -FI_EBUSY
-	 * Note for FI_EP_MSG type eps, this behavior
-	 * may not be correct for handling fi_shutdown.
-	 */
-
-	if (!dlist_empty(&vc->tx_queue))
-		GNIX_FATAL(FI_LOG_EP_CTRL, "VC TX queue not empty\n");
-
-	if (atomic_get(&vc->outstanding_tx_reqs))
-		GNIX_FATAL(FI_LOG_EP_CTRL,
-			   "VC outstanding_tx_reqs out of sync: %d\n",
-			   atomic_get(&vc->outstanding_tx_reqs));
-
 	fastlock_destroy(&vc->tx_queue_lock);
 
 	if (vc->smsg_mbox != NULL) {
@@ -1622,15 +1648,11 @@ int _gnix_vc_destroy(struct gnix_vc *vc)
 		vc->dgram = NULL;
 	}
 
-	ret = _gnix_nic_free_rem_id(nic, vc->vc_id);
-	if (ret != FI_SUCCESS)
-		GNIX_WARN(FI_LOG_EP_CTRL,
-		      "__gnix_vc_free_id returned %s\n",
-		      fi_strerror(-ret));
+	/*
+	 * put VC back on the freelist
+	 */
 
-	_gnix_free_bitmap(&vc->flags);
-
-	free(vc);
+	_gnix_fl_free(&vc->fr_list, &nic->vc_freelist);
 
 	return ret;
 }
@@ -1754,7 +1776,8 @@ int _gnix_vc_rx_schedule(struct gnix_vc *vc)
 {
 	struct gnix_nic *nic = vc->ep->nic;
 
-	if (!_gnix_test_and_set_bit(&vc->flags, GNIX_VC_FLAG_RX_SCHEDULED)) {
+	if (!__gnix_vc_test_and_set_bit(&vc->flags,
+					GNIX_VC_FLAG_RX_SCHEDULED)) {
 		COND_ACQUIRE(nic->requires_lock, &nic->rx_vc_lock);
 		dlist_insert_tail(&vc->rx_list, &nic->rx_vcs);
 		COND_RELEASE(nic->requires_lock, &nic->rx_vc_lock);
@@ -1855,7 +1878,7 @@ static struct gnix_vc *__gnix_nic_next_pending_rx_vc(struct gnix_nic *nic)
 
 	if (vc) {
 		GNIX_INFO(FI_LOG_EP_CTRL, "Dequeued RX VC (%p)\n", vc);
-		_gnix_clear_bit(&vc->flags, GNIX_VC_FLAG_RX_SCHEDULED);
+		__gnix_vc_clear_bit(&vc->flags, GNIX_VC_FLAG_RX_SCHEDULED);
 	}
 
 	return vc;
@@ -1893,7 +1916,8 @@ static int __gnix_vc_work_schedule(struct gnix_vc *vc)
 	if (dlist_empty(&vc->work_queue))
 		return FI_SUCCESS;
 
-	if (!_gnix_test_and_set_bit(&vc->flags, GNIX_VC_FLAG_WORK_SCHEDULED)) {
+	if (!__gnix_vc_test_and_set_bit(&vc->flags,
+			GNIX_VC_FLAG_WORK_SCHEDULED)) {
 		COND_ACQUIRE(nic->requires_lock, &nic->work_vc_lock);
 		dlist_insert_tail(&vc->work_list, &nic->work_vcs);
 		COND_RELEASE(nic->requires_lock, &nic->work_vc_lock);
@@ -1987,7 +2011,7 @@ static struct gnix_vc *__gnix_nic_next_pending_work_vc(struct gnix_nic *nic)
 
 	if (vc) {
 		GNIX_INFO(FI_LOG_EP_CTRL, "Dequeued work VC (%p)\n", vc);
-		_gnix_clear_bit(&vc->flags, GNIX_VC_FLAG_WORK_SCHEDULED);
+		__gnix_vc_clear_bit(&vc->flags, GNIX_VC_FLAG_WORK_SCHEDULED);
 	}
 
 	return vc;
@@ -2022,7 +2046,8 @@ int _gnix_vc_tx_schedule(struct gnix_vc *vc)
 	if (dlist_empty(&vc->tx_queue))
 		return FI_SUCCESS;
 
-	if (!_gnix_test_and_set_bit(&vc->flags, GNIX_VC_FLAG_TX_SCHEDULED)) {
+	if (!__gnix_vc_test_and_set_bit(&vc->flags,
+			GNIX_VC_FLAG_TX_SCHEDULED)) {
 		COND_ACQUIRE(nic->requires_lock, &nic->tx_vc_lock);
 		dlist_insert_tail(&vc->tx_list, &nic->tx_vcs);
 		COND_RELEASE(nic->requires_lock, &nic->tx_vc_lock);
@@ -2224,7 +2249,7 @@ static struct gnix_vc *__gnix_nic_next_pending_tx_vc(struct gnix_nic *nic)
 
 	if (vc) {
 		GNIX_INFO(FI_LOG_EP_CTRL, "Dequeued TX VC (%p)\n", vc);
-		_gnix_clear_bit(&vc->flags, GNIX_VC_FLAG_TX_SCHEDULED);
+		__gnix_vc_clear_bit(&vc->flags, GNIX_VC_FLAG_TX_SCHEDULED);
 	}
 
 	return vc;

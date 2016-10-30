@@ -89,6 +89,8 @@ enum gnix_vc_conn_req_type {
  * @var tx_queue             TX request queue
  * @var tx_queue_lock        TX request queue lock
  * @var tx_list              NIC TX VC list
+ * @var list                 used for unmapped vc list
+ * @var fr_list              used for vc free list
  * @var entry                used internally for managing linked lists
  *                           of vc structs that require O(1) insertion/removal
  * @var peer_fi_addr         FI address of peer with which this VC is connected
@@ -111,7 +113,7 @@ enum gnix_vc_conn_req_type {
  * @var peer_id              vc_id of peer.
  * @var modes                Used internally to track current state of
  *                           the VC not pertaining to the connection state.
- * @var flags                Bitmap used to hold vc schedule state
+ * @var flags                field used to hold vc schedule state
  * @var peer_irq_mem_hndl    peer GNI memhndl used for delivering
  *                           GNI_PostCqWrite requests to remote peer
  */
@@ -127,6 +129,7 @@ struct gnix_vc {
 	struct dlist_entry tx_list;	/* TX VC list entry */
 
 	struct dlist_entry list;	/* General purpose list */
+	struct dlist_entry fr_list;	/* fr list */
 	fi_addr_t peer_fi_addr;
 	struct gnix_address peer_addr;
 	struct gnix_address peer_cm_nic_addr;
@@ -140,7 +143,7 @@ struct gnix_vc {
 	int vc_id;
 	int peer_id;
 	int modes;
-	gnix_bitmap_t flags; /* We're missing regular bit ops */
+	uint64_t flags;
 	gni_mem_handle_t peer_irq_mem_hndl;
 	xpmem_apid_t peer_apid;
 	uint64_t peer_caps;

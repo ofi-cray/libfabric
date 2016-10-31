@@ -998,7 +998,7 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 
 		/*
 		 * we can only be in connecting state if we
-		 * reach here.  We have all the informatinon,
+		 * reach here.  We have all the information,
 		 * and the other side will get the information
 		 * at some point, so go ahead and build SMSG connection.
 		 */
@@ -1711,7 +1711,7 @@ int _gnix_vc_connect(struct gnix_vc *vc)
 
 /*
  * TODO: this is very simple right now and will need more
- * work to propertly disconnect
+ * work to properly disconnect
  */
 
 int _gnix_vc_disconnect(struct gnix_vc *vc)

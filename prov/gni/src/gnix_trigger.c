@@ -63,7 +63,7 @@ int _gnix_trigger_queue_req(struct gnix_fab_req *req)
 	}
 
 	GNIX_INFO(FI_LOG_EP_DATA,
-		  "Queueing triggered op: %p\n",
+		  "Queuing triggered op: %p\n",
 		  req);
 
 	fastlock_acquire(&cntr->trigger_lock);

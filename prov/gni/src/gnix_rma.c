@@ -846,7 +846,7 @@ int _gnix_rma_post_req(void *data)
  * buffer, then partially copied to the user buffer (the code terms this an
  * 'INDIRECT' transfer).  For larger unaligned reads, the interior, aligned
  * portion of remote data is pulled directly into the user provided buffer.
- * The four bytes at the head and tail of an unaliged read are pulled into an
+ * The four bytes at the head and tail of an unaligned read are pulled into an
  * intermediate buffer, then partially copied into the user buffer.  This
  * method is termed a 'CHAINED' transfer in the code.  Unaligned reads smaller
  * than the RDMA threshold can perform these 3 distinct transactions (head,
@@ -855,12 +855,12 @@ int _gnix_rma_post_req(void *data)
  * are used, one RDMA TX to transfer the bulk of the data, another FMA TX to
  * transfer the head and/or tail data.
  *
- * @param ep The endpiont to use for the RMA request.
+ * @param ep The endpoint to use for the RMA request.
  * @param fr_type RMA request type.
  * @param loc_addr Local address for the RMA request.
  * @param len Length of the RMA request.
  * @param mdesc Local memory descriptor for the RMA request.
- * @param dest_addr Remote endpiont address for the RMA request.
+ * @param dest_addr Remote endpoint address for the RMA request.
  * @param rem_addr Remote address for the RMA request.
  * @param mkey Remote memory key for the RMA request.
  * @param context Event context for the RMA request.

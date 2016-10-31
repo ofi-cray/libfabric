@@ -948,7 +948,7 @@ static int __gnix_rndzv_req(void *arg)
 	if (req->msg.recv_flags & GNIX_MSG_GET_TAIL) {
 		/* The user ended up with a send matching a receive with a
 		 * buffer that is too short and unaligned... what a way to
-		 * behave.  We could not have forseen which unaligned data to
+		 * behave.  We could not have foreseen which unaligned data to
 		 * send across with the rndzv_start request, so we do an extra
 		 * TX here to pull the random unaligned bytes. */
 		rc = _gnix_nic_tx_alloc(nic, &tail_txd);

@@ -426,7 +426,7 @@ static inline int __mr_cache_lru_remove(
 }
 
 /**
- * Remove entries that have been unmapped as indicated by the notifer
+ * Remove entries that have been unmapped as indicated by the notifier
  *
  * @param[in] cache  a memory registration cache
  *
@@ -483,7 +483,7 @@ __clear_notifier_events(gnix_mr_cache_t *cache)
 				}
 
 				/* Retire this entry (remove from
-				 * inuse tree) */
+				 * in-use tree) */
 
 				__entry_set_retired(entry);
 				iter = rbtFind(cache->inuse.rb_tree,
@@ -496,7 +496,7 @@ __clear_notifier_events(gnix_mr_cache_t *cache)
 							   "Unmapped entry"
 							   " could not be"
 							   " removed from"
-							   " in usetree.\n");
+							   " in use tree.\n");
 					}
 				} else {
 					/*  The only way we should get
@@ -705,7 +705,7 @@ static inline int __insert_entry_into_stale(
 			entry);
 	if (rc != RBT_STATUS_OK) {
 		GNIX_ERR(FI_LOG_MR,
-				"could not insert into stale rb tree,"
+				"could not insert into stale RB tree,"
 				" rc=%d key.address=%llx key.length=%llx entry=%p",
 				rc,
 				entry->key.address,
@@ -906,7 +906,7 @@ static inline int __mr_cache_entry_put(
 			iter = rbtFind(cache->inuse.rb_tree, &entry->key);
 			if (unlikely(!iter)) {
 				GNIX_ERR(FI_LOG_MR,
-						"failed to find entry in the inuse cache\n");
+						"failed to find entry in the in-use cache\n");
 			} else {
 				rc = rbtErase(cache->inuse.rb_tree, iter);
 				if (unlikely(rc != RBT_STATUS_OK)) {
@@ -1010,7 +1010,7 @@ int _gnix_mr_cache_init(
 	 */
 	dlist_init(&cache_p->lru_head);
 
-	/* set up inuse tree */
+	/* set up in-use tree */
 	cache_p->inuse.rb_tree = rbtNew(__mr_cache_key_comp);
 	if (!cache_p->inuse.rb_tree) {
 		rc = -FI_ENOMEM;
@@ -1190,7 +1190,7 @@ static int __mr_cache_search_inuse(
 			__find_overlapping_addr);
 	if (!iter) {
 		GNIX_DEBUG(FI_LOG_MR,
-			   "could not find key in inuse, key=%llx:%llx\n",
+			   "could not find key in in-use, key=%llx:%llx\n",
 			   key->address, key->length);
 		return -FI_ENOENT;
 	}
@@ -1258,7 +1258,7 @@ static int __mr_cache_search_inuse(
 
 
 	/* remove retired entries from tree */
-	GNIX_DEBUG(FI_LOG_MR, "removing retired entries from inuse tree\n");
+	GNIX_DEBUG(FI_LOG_MR, "removing retired entries from in-use tree\n");
 	__remove_sibling_entries_from_tree(cache,
 			&retired_entries, cache->inuse.rb_tree);
 
@@ -1342,7 +1342,7 @@ static int __mr_cache_search_stale(
 		ret = __mr_cache_search_inuse(cache, address, length,
 				&tmp, mr_key, fi_reg_context);
 		if (ret == FI_SUCCESS) {
-			/* if we found an entry in the inuse tree
+			/* if we found an entry in the in-use tree
 			 * in this manner, it means that there was
 			 * an entry either overlapping or contiguous
 			 * with the stale entry in the inuse tree, and

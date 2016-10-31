@@ -34,7 +34,7 @@
 
 /*
  * The buddy allocator splits the "base" block being managed into smaller
- * blocks.  Each block is a "power-of-two length".  These subblocks are kept
+ * blocks.  Each block is a "power-of-two length".  These sub-blocks are kept
  * track of in a doubly linked list, or free list.  Here are the structures
  * and format of the data structures used in the buddy allocator.  For
  * a description of each field please see gnix_buddy_allocator.h.

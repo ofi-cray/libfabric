@@ -913,7 +913,7 @@ DIRECT_FN STATIC ssize_t gnix_ep_tsenddata(struct fid_ep *ep, const void *buf,
  * @param[in] buf	the data to send
  * @param[in] len	the length of buf
  * @param[in] data	remote CQ data to transfer with the data from buf
- * @param[in] dest_addr	the desitnation address for connectionless transfers
+ * @param[in] dest_addr	the destination address for connection-less transfers
  * @param[in] tag	the tag associated with the message
  *
  * @return FI_SUCCESS	upon successfully writing to the destination
@@ -2081,7 +2081,7 @@ err:
 	err_ret = __destruct_tag_storages(ep_priv);
 	if (err_ret != FI_SUCCESS) {
 		GNIX_WARN(FI_LOG_EP_CTRL,
-			  "__destruct_tag_stroages returned %s\n",
+			  "__destruct_tag_storages returned %s\n",
 			  fi_strerror(-err_ret));
 	}
 

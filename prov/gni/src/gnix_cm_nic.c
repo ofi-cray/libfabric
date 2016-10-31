@@ -158,8 +158,8 @@ static int __process_datagram(struct gnix_datagram *dgram,
 	}
 
 	/*
-	 * if we are processing a WC datagram, repost, otherwise
-	 * just put back on the freelist.
+	 * if we are processing a WC datagram, re-post, otherwise
+	 * just put back on the free list.
 	 */
 	if (in_tag == GNIX_CM_NIC_WC_TAG) {
 		dgram->callback_fn = __process_datagram;

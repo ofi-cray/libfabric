@@ -511,7 +511,7 @@ err:
 	/*
 	 *  for the getinfo method, we need to return -FI_ENODATA  otherwise
 	 *  the fi_getinfo call will make an early exit without querying
-	 *  other providers which may be avaialble.
+	 *  other providers which may be available.
 	 */
 	return -FI_ENODATA;
 }
@@ -549,7 +549,7 @@ GNI_INI
 	assert(num_devices == 1);
 
 	/*
-	 * don't register if available ugni is older than one libfabric was
+	 * don't register if available uGNI is older than one libfabric was
 	 * built against
 	 */
 	status = GNI_GetVersionInformation(&lib_version);
@@ -581,7 +581,7 @@ GNI_INI
 
 	if (gnix_max_nics_per_ptag == 0) {
 		gnix_max_nics_per_ptag = 1;
-		GNIX_WARN(FI_LOG_FABRIC, "Using inter-procss FMA sharing\n");
+		GNIX_WARN(FI_LOG_FABRIC, "Using inter-process FMA sharing\n");
 	}
 
 	return (provider);

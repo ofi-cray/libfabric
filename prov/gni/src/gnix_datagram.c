@@ -505,7 +505,7 @@ int  _gnix_dgram_poll(struct gnix_dgram_hndl *hndl,
 
 		/*
 		 * pass COMPLETED and error post state cases to
-		 * callback function if present.  If a callback funciton
+		 * callback function if present.  If a callback function
 		 * is not present, the error states set ret to -FI_EIO.
 		 *
 		 * TODO should we also pass pending,remote_data states to
@@ -673,7 +673,7 @@ int _gnix_dgram_hndl_alloc(const struct gnix_fid_fabric *fabric,
 				     (void *)the_hndl);
 		if (ret) {
 			GNIX_WARN(FI_LOG_EP_CTRL,
-			"pthread_ceate  call returned %d\n", ret);
+			"pthread_create  call returned %d\n", ret);
 			goto err1;
 		}
 	}

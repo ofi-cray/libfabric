@@ -183,7 +183,7 @@ int _gnix_fl_alloc(struct dlist_entry **e, struct gnix_freelist *fl)
 		}
 
 		if (dlist_empty(&fl->freelist)) {
-			/* Can't happen unless multithreaded */
+			/* Can't happen unless multi-threaded */
 			ret = -FI_EAGAIN;
 			goto err;
 		}

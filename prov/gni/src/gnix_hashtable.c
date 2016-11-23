@@ -47,7 +47,7 @@
 
 /*
  * __gnix_ht_lf* prefixes denote lock free version of functions intended for
- *   use with hashtables that had attr->ht_internal_locking set to zero
+ *   use with hash tables that had attr->ht_internal_locking set to zero
  *   during initialization
  *
  * __gnix_ht_lk* prefixes denote locking versions of functions intended for

@@ -176,6 +176,7 @@ DIRECT_FN int gnix_mr_reg(struct fid *fid, const void *buf, size_t len,
 			.flags = flags,
 			.context = context,
 	};
+	int created_nic = 0;
 
 	GNIX_TRACE(FI_LOG_MR, "\n");
 
@@ -206,6 +207,7 @@ DIRECT_FN int gnix_mr_reg(struct fid *fid, const void *buf, size_t len,
 				  " ret=%i\n", rc);
 			goto err;
 		}
+		created_nic = 1;
 	}
 
 	reg_addr = ((uint64_t) buf) & ~((1 << GNIX_MR_PAGE_SHIFT) - 1);
@@ -244,7 +246,10 @@ DIRECT_FN int gnix_mr_reg(struct fid *fid, const void *buf, size_t len,
 	mr->mr_fid.key = _gnix_convert_mhdl_to_key(&mr->mem_hndl);
 
 	_gnix_ref_get(mr->domain);
-	_gnix_ref_get(mr->nic);
+	/* If a NIC was created to allow for registration, then don't take 
+	   an additional reference */
+	if (!created_nic) 
+		_gnix_ref_get(mr->nic);
 
 	/* set up mr_o out pointer */
 	*mr_o = &mr->mr_fid;

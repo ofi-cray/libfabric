@@ -214,7 +214,7 @@ static int __gnix_rma_post_err(struct gnix_fab_req *req, int error)
 		req->tx_failures++;
 		GNIX_INFO(FI_LOG_EP_DATA,
 			  "Requeueing failed request: %p\n", req);
-		return _gnix_vc_queue_work_req(req);
+		return _gnix_vc_requeue_work_req(req);
 	}
 
 	GNIX_WARN(FI_LOG_EP_DATA, "Failed %u transmits: %p error: %d\n",
@@ -493,7 +493,7 @@ static int __gnix_rma_txd_complete(void *arg, gni_return_t tx_status)
 		/* control message needed for imm. data or a counter event. */
 		req->tx_failures = 0;
 		req->work_fn = __gnix_rma_send_data_req;
-		_gnix_vc_queue_work_req(req);
+		_gnix_vc_requeue_work_req(req);
 	} else {
 		/* complete request */
 		rc = __gnix_rma_send_completion(req->vc->ep, req);
@@ -1346,15 +1346,6 @@ ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
 		return -FI_EINVAL;
 	}
 
-	/* find VC for target */
-	rc = _gnix_vc_ep_get_vc(ep, dest_addr, &vc);
-	if (rc) {
-		GNIX_INFO(FI_LOG_EP_DATA,
-			  "_gnix_vc_ep_get_vc() failed, addr: %lx, rc:\n",
-			  dest_addr, rc);
-		return rc;
-	}
-
 	/* setup fabric request */
 	req = _gnix_fr_alloc(ep);
 	if (!req) {
@@ -1366,7 +1357,6 @@ ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
 
 	req->type = fr_type;
 	req->gnix_ep = ep;
-	req->vc = vc;
 	req->user_context = context;
 	req->work_fn = _gnix_rma_post_req;
 	req->rma.sle.next = NULL;
@@ -1438,6 +1428,19 @@ ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
 		req->flags |= GNIX_RMA_RDMA;
 	}
 
+	COND_ACQUIRE(ep->requires_lock, &ep->vc_lock);
+
+	/* find VC for target */
+	rc = _gnix_vc_ep_get_vc(ep, dest_addr, &vc);
+	if (rc) {
+		GNIX_INFO(FI_LOG_EP_DATA,
+			  "_gnix_vc_ep_get_vc() failed, addr: %lx, rc:\n",
+			  dest_addr, rc);
+		goto err_get_vc;
+	}
+
+	req->vc = vc;
+
 	/* Add reads/writes to slist when FI_MORE is present, Or
 	 * if this is the first message in the chain without FI_MORE.
 	 * When FI_MORE is not present, if the slists are not empty
@@ -1452,14 +1455,13 @@ ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
 			slist_insert_tail(&req->rma.sle, &ep->more_read);
 			req->work_fn = _gnix_rma_more_post_req;
 		}
-		if (flags & FI_MORE)
-			return FI_SUCCESS;
+
+		/* Req is now in a chain, do not queue it alone. */
+		req = NULL;
 	}
 
-	/* Initiate reads and writes on first message without FI_MORE */
-	if (!(flags & FI_MORE) &&
-	    (!(slist_empty(&ep->more_write)) ||
-	     !(slist_empty(&ep->more_read)))) {
+	/* Initiate read/write chains on first message without FI_MORE. */
+	if (!(flags & FI_MORE)) {
 		if (!(slist_empty(&ep->more_write))) {
 			sle = ep->more_write.head;
 			more_req = container_of(sle, struct gnix_fab_req,
@@ -1478,13 +1480,23 @@ ssize_t _gnix_rma(struct gnix_fid_ep *ep, enum gnix_fab_req_type fr_type,
 			_gnix_vc_queue_tx_req(more_req);
 			slist_init(&ep->more_read);
 		}
-		return FI_SUCCESS;
 	}
-	GNIX_DEBUG(FI_LOG_EP_DATA, "Queuing (%p %p %d)\n",
-		  (void *)loc_addr, (void *)rem_addr, len);
 
-	return _gnix_vc_queue_tx_req(req);
+	if (req) {
+		GNIX_DEBUG(FI_LOG_EP_DATA, "Queuing (%p %p %d)\n",
+			  (void *)loc_addr, (void *)rem_addr, len);
 
+		rc = _gnix_vc_queue_tx_req(req);
+	}
+
+	COND_RELEASE(ep->requires_lock, &ep->vc_lock);
+
+	return rc;
+
+err_get_vc:
+	COND_RELEASE(ep->requires_lock, &ep->vc_lock);
+	if (flags & FI_LOCAL_MR)
+		fi_close(&auto_mr->fid);
 err_auto_reg:
 	_gnix_fr_free(req->vc->ep, req);
 	return rc;

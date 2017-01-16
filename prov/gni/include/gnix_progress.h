@@ -1,6 +1,7 @@
 /*
- * Copyright (c) 2015 Los Alamos National Security, LLC. All rights reserved.
- * Copyright (c) 2015-2016 Cray Inc. All rights reserved.
+ * Copyright (c) 2016 Cray Inc. All rights reserved.
+ * Copyright (c) 2016 Los Alamos National Security, LLC.
+ *               All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -31,60 +32,28 @@
  * SOFTWARE.
  */
 
-#ifndef _GNIX_CQ_H_
-#define _GNIX_CQ_H_
+#ifndef _GNIX_PROGRESS_H_
+#define _GNIX_PROGRESS_H_
 
-#include <fi.h>
-
-#include "gnix_progress.h"
-#include "gnix_queue.h"
-#include "gnix_wait.h"
 #include "gnix_util.h"
-#include <fi_list.h>
-#include <stdbool.h>
 
-#define GNIX_CQ_DEFAULT_FORMAT struct fi_cq_entry
-#define GNIX_CQ_DEFAULT_SIZE   256
+/*
+ * Progress common code
+ */
 
-struct gnix_cq_entry {
-	void *the_entry;
-	fi_addr_t src_addr;
-	struct slist_entry item;
+struct gnix_prog_set {
+	struct dlist_entry prog_objs;
+	rwlock_t lock;
+	int requires_lock;
 };
 
-struct gnix_fid_cq {
-	struct fid_cq cq_fid;
-	struct gnix_fid_domain *domain;
+int _gnix_prog_progress(struct gnix_prog_set *set);
+int _gnix_prog_obj_add(struct gnix_prog_set *set, void *obj,
+		       int (*prog_fn)(void *data));
+int _gnix_prog_obj_rem(struct gnix_prog_set *set, void *obj,
+		       int (*prog_fn)(void *data));
+int _gnix_prog_init(struct gnix_prog_set *set);
+int _gnix_prog_fini(struct gnix_prog_set *set);
 
-	struct gnix_queue *events;
-	struct gnix_queue *errors;
+#endif /* _GNIX_PROGRESS_H_ */
 
-	struct fi_cq_attr attr;
-	size_t entry_size;
-
-	struct fid_wait *wait;
-
-	fastlock_t lock;
-	struct gnix_reference ref_cnt;
-
-	struct gnix_prog_set pset;
-
-	bool requires_lock;
-};
-
-
-ssize_t _gnix_cq_add_event(struct gnix_fid_cq *cq, void *op_context,
-			  uint64_t flags, size_t len, void *buf,
-			  uint64_t data, uint64_t tag, fi_addr_t src_addr);
-
-ssize_t _gnix_cq_add_error(struct gnix_fid_cq *cq, void *op_context,
-			  uint64_t flags, size_t len, void *buf,
-			  uint64_t data, uint64_t tag, size_t olen,
-			  int err, int prov_errno, void *err_data);
-
-int _gnix_cq_poll_obj_add(struct gnix_fid_cq *cq, void *obj,
-			  int (*prog_fn)(void *data));
-int _gnix_cq_poll_obj_rem(struct gnix_fid_cq *cq, void *obj,
-			  int (*prog_fn)(void *data));
-
-#endif

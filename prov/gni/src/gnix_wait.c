@@ -35,6 +35,7 @@
 #include "gnix.h"
 #include "gnix_wait.h"
 #include "gnix_nic.h"
+#include "gnix_cm_nic.h"
 #include "gnix_eq.h"
 /*
  * Gnix wait progress thread declarations for making sure nic progress
@@ -64,6 +65,7 @@ static void *__gnix_wait_nic_prog_thread_fn(void *the_arg)
 	int ret = FI_SUCCESS, prev_state;
 	struct gnix_nic *nic1, *nic2;
 	struct gnix_fid_eq *eq1, *eq2;
+	struct gnix_cm_nic *cm_nic1, *cm_nic2;
 	sigset_t  sigmask;
 
 	GNIX_TRACE(FI_LOG_EP_CTRL, "\n");
@@ -122,12 +124,16 @@ try_again:
 
 	pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
 
+	/* Progress all EQs. */
 	pthread_mutex_lock(&gnix_eq_list_lock);
+
 	dlist_for_each_safe(&gnix_eq_list, eq1, eq2, gnix_fid_eq_list) {
 		_gnix_eq_progress(eq1);
 	}
+
 	pthread_mutex_unlock(&gnix_eq_list_lock);
 
+	/* Progress all NICs. */
 	pthread_mutex_lock(&gnix_nic_list_lock);
 
 	dlist_for_each_safe(&gnix_nic_list, nic1, nic2, gnix_nic_list) {
@@ -135,6 +141,16 @@ try_again:
 	}
 
 	pthread_mutex_unlock(&gnix_nic_list_lock);
+
+	/* Progress all CM NICs. */
+	pthread_mutex_lock(&gnix_cm_nic_list_lock);
+
+	dlist_for_each_safe(&gnix_cm_nic_list, cm_nic1, cm_nic2, cm_nic_list) {
+		_gnix_cm_nic_progress((void *)cm_nic1);
+	}
+
+	pthread_mutex_unlock(&gnix_cm_nic_list_lock);
+
 	pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 	usleep(gnix_wait_thread_sleep_time);
 	goto try_again;

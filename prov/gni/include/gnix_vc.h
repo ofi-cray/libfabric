@@ -137,7 +137,6 @@ struct gnix_vc {
 	struct gnix_address peer_cm_nic_addr;
 	struct gnix_fid_ep *ep;
 	void *smsg_mbox;
-	struct gnix_datagram *dgram;
 	gni_ep_handle_t gni_ep;
 	atomic_t outstanding_tx_reqs;
 	enum gnix_vc_conn_state conn_state;

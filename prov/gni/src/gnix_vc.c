@@ -686,6 +686,12 @@ static int __gnix_vc_connect_to_self(struct gnix_vc *vc)
 			  "_gnix_vc_schedule returned %s\n",
 			  fi_strerror(-ret));
 
+	ret = __gnix_vc_push_tx_reqs(vc);
+	if (ret != FI_SUCCESS)
+		GNIX_WARN(FI_LOG_EP_DATA,
+			  "_gnix_vc_push_tx_reqs returned %s\n",
+			  fi_strerror(-ret));
+
 	GNIX_DEBUG(FI_LOG_EP_CTRL, "moving vc %p state to connected\n", vc);
 	return ret;
 
@@ -800,6 +806,11 @@ static int __gnix_vc_hndl_conn_resp(struct gnix_cm_nic *cm_nic,
 	if (ret != FI_SUCCESS)
 		GNIX_WARN(FI_LOG_EP_DATA,
 			  "_gnix_vc_schedule returned %s\n",
+			  fi_strerror(-ret));
+	ret = __gnix_vc_push_tx_reqs(vc);
+	if (ret != FI_SUCCESS)
+		GNIX_WARN(FI_LOG_EP_DATA,
+			  "_gnix_vc_push_tx_reqs returned %s\n",
 			  fi_strerror(-ret));
 
 	return ret;
@@ -1048,6 +1059,12 @@ static int __gnix_vc_hndl_conn_req(struct gnix_cm_nic *cm_nic,
 			GNIX_WARN(FI_LOG_EP_CTRL,
 				"_gnix_cm_nic_progress returned %s\n",
 				fi_strerror(-ret));
+
+		ret = __gnix_vc_push_tx_reqs(vc);
+		if (ret != FI_SUCCESS)
+			GNIX_WARN(FI_LOG_EP_DATA,
+				  "_gnix_vc_push_tx_reqs returned %s\n",
+				  fi_strerror(-ret));
 	}
 
 	vc->peer_caps = peer_caps;
@@ -1242,6 +1259,11 @@ static int __gnix_vc_conn_ack_prog_fn(void *data, int *complete_ptr)
 		if (ret != FI_SUCCESS)
 			GNIX_WARN(FI_LOG_EP_DATA,
 				  "_gnix_vc_schedule returned %s\n",
+				  fi_strerror(-ret));
+		ret = __gnix_vc_push_tx_reqs(vc);
+		if (ret != FI_SUCCESS)
+			GNIX_WARN(FI_LOG_EP_DATA,
+				  "_gnix_vc_push_tx_reqs returned %s\n",
 				  fi_strerror(-ret));
 
 	} else if (ret == -FI_EAGAIN) {

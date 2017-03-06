@@ -252,6 +252,7 @@ err:
 static int __gnix_cq_progress(struct gnix_fid_cq *cq)
 {
 	struct gnix_cq_poll_nic *pnic, *tmp;
+	struct gnix_cm_nic *cm_nic = cq->domain->cm_nic;
 	int rc;
 
 	COND_READ_ACQUIRE(cq->requires_lock, &cq->nic_lock);
@@ -266,13 +267,21 @@ static int __gnix_cq_progress(struct gnix_fid_cq *cq)
 
 	COND_RW_RELEASE(cq->requires_lock, &cq->nic_lock);
 
-	if (unlikely(cq->domain->control_progress != FI_PROGRESS_AUTO)) {
-		if (cq->domain->cm_nic != NULL) {
-			rc = _gnix_cm_nic_progress(cq->domain->cm_nic);
+	/*
+	 * check to see if we need to poke the cm nic to progress
+	 * backlogged datagram requests.  This is needed even if
+	 * control_progress is set to FI_PROGRESS_AUTO since we
+	 * don't get notification back from kGNI when a previously
+	 * posted bound datagram has actually completed, allowing
+	 * subsequent pending bound datagrams to be posted to kGNI.
+	 */
+
+	if (cm_nic != NULL &&
+		_gnix_cm_nic_need_progress(cm_nic)) {
+			rc = _gnix_cm_nic_progress(cm_nic);
 			if (rc)
 				GNIX_WARN(FI_LOG_CQ,
 				  "_gnix_cm_nic_progress returned: %d\n", rc);
-		}
 	}
 
 	return FI_SUCCESS;
@@ -602,6 +611,12 @@ DIRECT_FN STATIC ssize_t gnix_cq_readerr(struct fid_cq *cq,
 		return -FI_EINVAL;
 
 	cq_priv = container_of(cq, struct gnix_fid_cq, cq_fid);
+
+	/*
+	 * we need to progress cq.  some apps may be only using
+	 * cq to check for errors.
+	 */
+	__gnix_cq_progress(cq_priv);
 
 	COND_ACQUIRE(cq_priv->requires_lock, &cq_priv->lock);
 

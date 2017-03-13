@@ -1557,15 +1557,6 @@ int _gnix_vc_destroy(struct gnix_vc *vc)
 		vc->smsg_mbox = NULL;
 	}
 
-	if (vc->dgram != NULL) {
-		ret = _gnix_dgram_free(vc->dgram);
-		if (ret != FI_SUCCESS)
-			GNIX_WARN(FI_LOG_EP_CTRL,
-			      "_gnix_dgram_free returned %s\n",
-			      fi_strerror(-ret));
-		vc->dgram = NULL;
-	}
-
 	ret = _gnix_nic_free_rem_id(nic, vc->vc_id);
 	if (ret != FI_SUCCESS)
 		GNIX_WARN(FI_LOG_EP_CTRL,

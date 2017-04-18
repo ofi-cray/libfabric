@@ -525,33 +525,38 @@ static void __nic_get_completed_txd(struct gnix_nic *nic,
 static int __nic_tx_progress(struct gnix_nic *nic, gni_cq_handle_t cq)
 {
 	int ret = FI_SUCCESS;
-	gni_return_t tx_status;
-	struct gnix_tx_descriptor *txd;
+	int i = 0;
+	gni_return_t tx_status[GNIX_N_CQES];
+	struct gnix_tx_descriptor *txd[GNIX_N_CQES] = {NULL};
 
 	do {
-		txd = NULL;
-
 		COND_ACQUIRE(nic->requires_lock, &nic->lock);
-		__nic_get_completed_txd(nic, cq, &txd,
-					&tx_status);
+		for (i = 0; i < GNIX_N_CQES; i++) {
+			__nic_get_completed_txd(nic, cq, &txd[i],
+						&tx_status[i]);
+
+			if (txd[i] == NULL)
+				break;
+		}
 		COND_RELEASE(nic->requires_lock, &nic->lock);
 
-		if (txd && txd->completer_fn) {
-			ret = txd->completer_fn(txd, tx_status);
-			if (ret != FI_SUCCESS) {
-				/*
-				 * TODO: need to post error to CQ
-				 */
-				GNIX_WARN(FI_LOG_EP_DATA,
-					  "TXD completer failed: %d", ret);
+		for (i = 0; i < GNIX_N_CQES; i++) {
+			if (txd[i] && (txd[i])->completer_fn) {
+				ret = (txd[i])->completer_fn(txd[i], tx_status[i]);
+				if (ret != FI_SUCCESS) {
+					/*
+					 * TODO: need to post error to CQ
+					 */
+					GNIX_WARN(FI_LOG_EP_DATA,
+						  "TXD completer failed: %d", ret);
+				}
+			}
+
+			if ((txd[i] == NULL) || ret != FI_SUCCESS) {
+				return ret;
 			}
 		}
-
-		if ((txd == NULL) || ret != FI_SUCCESS)
-			break;
 	} while (1);
-
-	return ret;
 }
 
 int _gnix_nic_progress(void *arg)

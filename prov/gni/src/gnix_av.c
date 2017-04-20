@@ -46,7 +46,7 @@
 #include "gnix_cm.h"
 
 /*
- * local variables and structs
+ * local variables and structures
  */
 
 #define GNIX_AV_ENTRY_VALID		(1ULL)

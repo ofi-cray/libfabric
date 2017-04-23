@@ -71,6 +71,7 @@
    fun:_gnix_ep_nic_init
    fun:gnix_ep_open
    fun:fi_endpoint
+   fun:fi_getinfo@@FABRIC_1.0
 }
 
 #

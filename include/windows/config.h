@@ -11,6 +11,9 @@
 /* Set to 1 to use c11 atomic functions */
 /* #undef HAVE_ATOMICS */   /* TODO: add atomics support for windows */
 
+/* Set to 1 to use built-in intrincics atomics */
+#define HAVE_BUILTIN_ATOMICS 1
+
 /* Define to 1 if clock_gettime is available. */
 /* #undef HAVE_CLOCK_GETTIME */
 
@@ -160,6 +163,9 @@
 
 /* Define to 1 if pthread_spin_init is available. */
 /* #undef PT_LOCK_SPIN */
+
+/* Define to 1 if adapter info API is defined. */
+#define HAVE_MIB_IPADDRTABLE 1
 
 /* The size of `void *', as computed by sizeof. */
 #ifdef _WIN64

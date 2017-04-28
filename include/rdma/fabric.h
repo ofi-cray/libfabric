@@ -204,6 +204,7 @@ enum fi_mr_mode {
 #define FI_MR_PROV_KEY		(1 << 6)
 #define FI_MR_MMU_NOTIFY	(1 << 7)
 #define FI_MR_RMA_EVENT		(1 << 8)
+#define FI_MR_ENDPOINT		(1 << 9)
 
 enum fi_progress {
 	FI_PROGRESS_UNSPEC,
@@ -542,6 +543,7 @@ enum fi_type {
 	FI_TYPE_EQ_EVENT,
 	FI_TYPE_CQ_EVENT_FLAGS,
 	FI_TYPE_MR_MODE,
+	FI_TYPE_OP_TYPE,
 };
 
 char *fi_tostr(const void *data, enum fi_type datatype);

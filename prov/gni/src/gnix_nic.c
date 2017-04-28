@@ -1009,11 +1009,12 @@ int gnix_nic_alloc(struct gnix_fid_domain *domain,
 
 		status = GNI_CqCreate(nic->gni_nic_hndl,
 					domain->params.tx_cq_size,
-					0,
+					0,                  /* no delay count */
 					GNI_CQ_BLOCKING |
 						domain->gni_cq_modes,
-					NULL,
-					NULL,
+					NULL,              /* useless handler */
+					NULL,               /* useless handler
+								context */
 					&nic->tx_cq_blk);
 		if (status != GNI_RC_SUCCESS) {
 			GNIX_WARN(FI_LOG_EP_CTRL,

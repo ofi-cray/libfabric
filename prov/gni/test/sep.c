@@ -217,9 +217,6 @@ void sep_setup_common(int av_type)
 					 FI_SEND | FI_WRITE);
 			cr_assert(!ret, "fi_ep_bind");
 
-			ret = fi_enable(tx_ep[i][j]);
-			cr_assert(!ret, "fi_enable");
-
 			ret = fi_ep_bind(rx_ep[i][j], &rx_cq[i][j]->fid,
 					 FI_RECV);
 			cr_assert(!ret, "fi_ep_bind");
@@ -227,6 +224,9 @@ void sep_setup_common(int av_type)
 			ret = fi_ep_bind(rx_ep[i][j], &recv_cntr[i]->fid,
 					 FI_RECV | FI_READ);
 			cr_assert(!ret, "fi_ep_bind");
+
+			ret = fi_enable(tx_ep[i][j]);
+			cr_assert(!ret, "fi_enable");
 
 			ret = fi_enable(rx_ep[i][j]);
 			cr_assert(!ret, "fi_enable");

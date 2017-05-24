@@ -46,6 +46,10 @@
 #include <pthread.h>
 #include <sys/time.h>
 
+#include <inttypes.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 #include <fi_signal.h>
 #include <rdma/providers/fi_prov.h>
 #include <rdma/fi_errno.h>
@@ -217,6 +221,226 @@ uint64_t fi_gettime_us(void)
 	gettimeofday(&now, NULL);
 	return now.tv_sec * 1000000 + now.tv_usec;
 }
+
+const char *ofi_straddr(char *buf, size_t *len,
+			uint32_t addr_format, const void *addr)
+{
+	const struct sockaddr *sock_addr;
+	const struct sockaddr_in6 *sin6;
+	const struct sockaddr_in *sin;
+	char str[INET6_ADDRSTRLEN + 8];
+	size_t size;
+
+	if (!addr || !len)
+		return NULL;
+
+	switch (addr_format) {
+	case FI_SOCKADDR:
+		sock_addr = addr;
+		switch (sock_addr->sa_family) {
+		case AF_INET:
+			goto sa_sin;
+		case AF_INET6:
+			goto sa_sin6;
+		default:
+			return NULL;
+		}
+		break;
+	case FI_SOCKADDR_IN:
+sa_sin:
+		sin = addr;
+		if (!inet_ntop(sin->sin_family, &sin->sin_addr, str,
+			       sizeof(str)))
+			return NULL;
+
+		size = snprintf(buf, MIN(*len, sizeof(str)),
+				"inet://%s:%" PRIu16, str,
+				ntohs(sin->sin_port));
+		break;
+	case FI_SOCKADDR_IN6:
+sa_sin6:
+		sin6 = addr;
+		if (!inet_ntop(sin6->sin6_family, &sin6->sin6_addr, str,
+			       sizeof(str)))
+			return NULL;
+
+		size = snprintf(buf, MIN(*len, sizeof(str)),
+				"inet6://[%s]:%" PRIu16, str,
+				ntohs(sin6->sin6_port));
+		break;
+	case FI_SOCKADDR_IB:
+		size = snprintf(buf, *len, "ib://%p", addr);
+		break;
+	case FI_ADDR_PSMX:
+		size = snprintf(buf, *len, "psmx://%p", addr);
+		break;
+	case FI_ADDR_GNI:
+		size = snprintf(buf, *len, "gni://%" PRIx64, *(uint64_t *) addr);
+		break;
+	case FI_ADDR_BGQ:
+		size = snprintf(buf, *len, "bgq://%p", addr);
+		break;
+	case FI_ADDR_MLX:
+		size = snprintf(buf, *len, "mlx://%p", addr);
+		break;
+	case FI_ADDR_STR:
+		size = snprintf(buf, *len, "%s", (const char *) addr);
+		break;
+	default:
+		return NULL;
+	}
+
+	/* Make sure that possibly truncated messages have a null terminator. */
+	if (buf && *len)
+		buf[*len - 1] = '\0';
+	*len = size + 1;
+	return buf;
+}
+
+static uint32_t ofi_addr_format(const char *str)
+{
+	char *fmt = NULL;
+	int ret;
+
+	ret = sscanf(str, "%m[^:]://", &fmt);
+	if ((ret != 1) || !fmt)
+		return FI_FORMAT_UNSPEC;
+
+	if (!strcmp(fmt, "inet"))
+		return FI_SOCKADDR_IN;
+	else if (!strcmp(fmt, "inet6"))
+		return FI_SOCKADDR_IN6;
+	else if (!strcmp(fmt, "ib"))
+		return FI_SOCKADDR_IB;
+	else if (!strcmp(fmt, "psmx"))
+		return FI_ADDR_PSMX;
+	else if (!strcmp(fmt, "gni"))
+		return FI_ADDR_GNI;
+	else if (!strcmp(fmt, "bgq"))
+		return FI_ADDR_BGQ;
+	else if (!strcmp(fmt, "mlx"))
+		return FI_ADDR_MLX;
+
+	return FI_FORMAT_UNSPEC;
+}
+
+static int ofi_str_to_psmx(const char *str, void **addr, size_t *len)
+{
+	int ret;
+
+	*len = sizeof(uint64_t);
+	if (!(*addr = calloc(1, *len)))
+		return -FI_ENOMEM;
+
+	ret = sscanf(str, "%*[^:]://%" SCNu64, (uint64_t *) *addr);
+	return (ret == 1) ? 0 : -FI_EINVAL;
+}
+
+static int ofi_str_to_sin(const char *str, void **addr, size_t *len)
+{
+	struct sockaddr_in *sin;
+	char *ip = NULL;
+	int ret;
+
+	*len = sizeof(*sin);
+	if (!(sin = calloc(1, *len)))
+		return -FI_ENOMEM;
+
+	sin->sin_family = AF_INET;
+	ret = sscanf(str, "%*[^:]://:%" SCNu16, &sin->sin_port);
+	if (ret == 1)
+		goto match;
+
+	ret = sscanf(str, "%*[^:]://%m[^:]:%" SCNu16, &ip, &sin->sin_port);
+	if (ret == 2)
+		goto match;
+
+	ret = sscanf(str, "%*[^:]://%m[^:/]", &ip);
+	if (ret == 1)
+		goto match;
+
+err:
+	free(ip);
+	free(sin);
+	return -FI_EINVAL;
+
+match:
+	if (ip) {
+		ret = inet_pton(AF_INET, ip, &sin->sin_addr);
+		if (ret != 1)
+			goto err;
+		free(ip);
+	}
+	sin->sin_port = htons(sin->sin_port);
+	*addr = sin;
+	return 0;
+}
+
+static int ofi_str_to_sin6(const char *str, void **addr, size_t *len)
+{
+	struct sockaddr_in6 *sin6;
+	char *ip = NULL;
+	int ret;
+
+	*len = sizeof(*sin6);
+	if (!(sin6 = calloc(1, *len)))
+		return -FI_ENOMEM;
+
+	sin6->sin6_family = AF_INET6;
+	ret = sscanf(str, "%*[^:]://:%" SCNu16, &sin6->sin6_port);
+	if (ret == 1)
+		goto match;
+
+	ret = sscanf(str, "%*[^:]://[%m[^]]]:%" SCNu16, &ip, &sin6->sin6_port);
+	if (ret == 2)
+		goto match;
+
+	ret = sscanf(str, "%*[^:]://[%m[^]]", &ip);
+	if (ret == 1)
+		goto match;
+
+err:
+	free(ip);
+	free(sin6);
+	return -FI_EINVAL;
+
+match:
+	if (ip) {
+		ret = inet_pton(AF_INET6, ip, &sin6->sin6_addr);
+		if (ret != 1)
+			goto err;
+		free(ip);
+	}
+	sin6->sin6_port = htons(sin6->sin6_port);
+	*addr = sin6;
+	return 0;
+}
+
+int ofi_str_toaddr(const char *str, uint32_t *addr_format,
+		   void **addr, size_t *len)
+{
+	*addr_format = ofi_addr_format(str);
+	if (*addr_format == FI_FORMAT_UNSPEC)
+		return -FI_EINVAL;
+
+	switch (*addr_format) {
+	case FI_SOCKADDR_IN:
+		return ofi_str_to_sin(str, addr, len);
+	case FI_SOCKADDR_IN6:
+		return ofi_str_to_sin6(str, addr, len);
+	case FI_ADDR_PSMX:
+		return ofi_str_to_psmx(str, addr, len);
+	case FI_SOCKADDR_IB:
+	case FI_ADDR_GNI:
+	case FI_ADDR_BGQ:
+	case FI_ADDR_MLX:
+	default:
+		return -FI_ENOSYS;
+	}
+
+	return 0;
+}
+
 
 #ifndef HAVE_EPOLL
 

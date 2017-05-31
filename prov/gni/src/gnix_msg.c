@@ -1956,10 +1956,14 @@ static int __smsg_eager_msg_w_data(void *data, void *msg)
 
 		GNIX_DEBUG(FI_LOG_EP_DATA, "Freeing req: %p\n", req);
 
-		/* Dequeue and free the request. */
-		if (mrecv_req == NULL)
+		/*
+		 * Dequeue and free the request if not
+		 * matching a FI_MULTI_RECV buffer.
+		 */
+		if (mrecv_req == NULL) {
 			_gnix_remove_tag(posted_queue, req);
-		_gnix_fr_free(ep, req);
+			_gnix_fr_free(ep, req);
+		}
 
 	} else {
 		/* Add new unexpected receive request. */

@@ -349,7 +349,7 @@ ssize_t _ep_recv(struct fid_ep *ep, void *buf, size_t len,
 				  NULL);
 	 } else {
 		return _gnix_recv_mr(ep_priv,
-				     buf,
+				     (uint64_t)buf,
 				     len,
 				     desc,
 				     src_addr,

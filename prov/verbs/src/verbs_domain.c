@@ -224,6 +224,7 @@ static int fi_ibv_domain_close(fid_t fid)
 						struct fi_ibv_rdm_av_entry,
 						removed_next);
 			fi_ibv_rdm_overall_conn_cleanup(av_entry);
+			ofi_freealign(av_entry);
 		}
 		rdma_destroy_ep(domain->rdm_cm->listener);
 		free(domain->rdm_cm);
@@ -306,6 +307,7 @@ static struct fi_ops_domain fi_ibv_rdm_domain_ops = {
 	.poll_open = fi_no_poll_open,
 	.stx_ctx = fi_no_stx_context,
 	.srx_ctx = fi_no_srx_context,
+	.query_atomic = fi_ibv_query_atomic,
 };
 
 static int

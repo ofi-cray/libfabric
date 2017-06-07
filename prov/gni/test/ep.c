@@ -50,7 +50,7 @@ static struct fi_info *fi;
 static struct fid_fabric *fab;
 static struct fid_domain *dom;
 
-static void setup(void)
+static void _setup(uint32_t version)
 {
 	int ret;
 
@@ -59,7 +59,7 @@ static void setup(void)
 
 	hints->fabric_attr->prov_name = strdup("gni");
 
-	ret = fi_getinfo(fi_version(), NULL, 0, 0, hints, &fi);
+	ret = fi_getinfo(version, NULL, 0, 0, hints, &fi);
 	cr_assert(!ret, "fi_getinfo");
 
 	ret = fi_fabric(fi->fabric_attr, &fab, NULL);
@@ -67,7 +67,16 @@ static void setup(void)
 
 	ret = fi_domain(fab, fi, &dom, NULL);
 	cr_assert(!ret, "fi_domain");
+}
 
+static void setup(void)
+{
+	_setup(fi_version());
+}
+
+static void setup_1_0(void)
+{
+	_setup(FI_VERSION(1, 0));
 }
 
 static void teardown(void)
@@ -85,6 +94,25 @@ static void teardown(void)
 }
 
 TestSuite(endpoint, .init = setup, .fini = teardown);
+TestSuite(endpoint_1_0, .init = setup_1_0, .fini = teardown);
+
+Test(endpoint_1_0, no_auth_key_support)
+{
+	int ret;
+	struct fid_ep *ep;
+	void *old_auth_key = fi->ep_attr->auth_key;
+	int old_auth_key_size = fi->ep_attr->auth_key_size;
+
+	fi->ep_attr->auth_key = (void *) 0xdeadbeef;
+	fi->ep_attr->auth_key_size = 47;
+
+	ret = fi_endpoint(dom, fi, &ep, NULL);
+	cr_assert(ret == -FI_EINVAL, "fi_endpoint, ret=%d expected=%d",
+		ret, -FI_EINVAL);
+
+	fi->ep_attr->auth_key = old_auth_key;
+	fi->ep_attr->auth_key_size = old_auth_key_size;
+}
 
 Test(endpoint_info, info)
 {
@@ -280,7 +308,6 @@ Test(endpoint, getsetopt_gni_ep)
 	cr_assert_eq(ep_priv->posted_recv_queue.attr.type, GNIX_TAG_HLIST);
 	cr_assert_eq(ep_priv->tagged_unexp_recv_queue.attr.type, GNIX_TAG_HLIST);
 	cr_assert_eq(ep_priv->tagged_posted_recv_queue.attr.type, GNIX_TAG_HLIST);
-
 
 	val = 0; // reset the value
 	ret = ep_ops->get_val(&ep->fid, GNI_HASH_TAG_IMPL, &val);

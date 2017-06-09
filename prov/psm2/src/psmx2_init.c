@@ -189,6 +189,9 @@ static int psmx2_getinfo(uint32_t version, const char *node,
 
 	*info = NULL;
 
+	if (FI_VERSION_GE(version, FI_VERSION(1,5)))
+		mr_mode = 0;
+
 	/*
 	 * Try to turn on PSM2 multi-EP support if the application asks for
 	 * more than one tx context per endpoint. This only works for the
@@ -236,15 +239,16 @@ static int psmx2_getinfo(uint32_t version, const char *node,
 			"failed to allocate src addr.\n");
 		return -FI_ENODATA;
 	}
+	src_addr->signature = 0xFFFF;
 	src_addr->unit = PSMX2_DEFAULT_UNIT;
 	src_addr->port = PSMX2_DEFAULT_PORT;
 	src_addr->service = PSMX2_ANY_SERVICE;
 
 	if (flags & FI_SOURCE) {
 		if (node)
-			sscanf(node, "%*[^:]:%d:%d", &src_addr->unit, &src_addr->port);
+			sscanf(node, "%*[^:]:%" SCNi8 ":%" SCNu8, &src_addr->unit, &src_addr->port);
 		if (service)
-			sscanf(service, "%u", &src_addr->service);
+			sscanf(service, "%" SCNu32, &src_addr->service);
 		FI_INFO(&psmx2_prov, FI_LOG_CORE,
 			"node '%s' service '%s' converted to <unit=%d, port=%d, service=%d>\n",
 			node, service, src_addr->unit, src_addr->port, src_addr->service);
@@ -268,12 +272,12 @@ static int psmx2_getinfo(uint32_t version, const char *node,
 	if (hints) {
 		switch (hints->addr_format) {
 		case FI_FORMAT_UNSPEC:
-		case FI_ADDR_PSMX:
+		case FI_ADDR_PSMX2:
 			break;
 		default:
 			FI_INFO(&psmx2_prov, FI_LOG_CORE,
 				"hints->addr_format=%d, supported=%d,%d.\n",
-				hints->addr_format, FI_FORMAT_UNSPEC, FI_ADDR_PSMX);
+				hints->addr_format, FI_FORMAT_UNSPEC, FI_ADDR_PSMX2);
 			goto err_out;
 		}
 
@@ -293,13 +297,13 @@ static int psmx2_getinfo(uint32_t version, const char *node,
 
 			switch (hints->ep_attr->protocol) {
 			case FI_PROTO_UNSPEC:
-			case FI_PROTO_PSMX:
+			case FI_PROTO_PSMX2:
 				break;
 			default:
 				FI_INFO(&psmx2_prov, FI_LOG_CORE,
 					"hints->protocol=%d, supported=%d %d\n",
 					hints->ep_attr->protocol,
-					FI_PROTO_UNSPEC, FI_PROTO_PSMX);
+					FI_PROTO_UNSPEC, FI_PROTO_PSMX2);
 				goto err_out;
 			}
 
@@ -555,7 +559,7 @@ static int psmx2_getinfo(uint32_t version, const char *node,
 	}
 
 	psmx2_info->ep_attr->type = ep_type;
-	psmx2_info->ep_attr->protocol = FI_PROTO_PSMX;
+	psmx2_info->ep_attr->protocol = FI_PROTO_PSMX2;
 	psmx2_info->ep_attr->protocol_version = PSM2_VERNO;
 	psmx2_info->ep_attr->max_msg_size = PSMX2_MAX_MSG_SIZE;
 	psmx2_info->ep_attr->mem_tag_format = fi_tag_format(max_tag_value);
@@ -587,7 +591,7 @@ static int psmx2_getinfo(uint32_t version, const char *node,
 	psmx2_info->next = NULL;
 	psmx2_info->caps = caps;
 	psmx2_info->mode = mode;
-	psmx2_info->addr_format = FI_ADDR_PSMX;
+	psmx2_info->addr_format = FI_ADDR_PSMX2;
 	psmx2_info->src_addr = src_addr;
 	psmx2_info->src_addrlen = sizeof(*src_addr);
 	psmx2_info->dest_addr = dest_addr;

@@ -191,7 +191,7 @@ struct rxm_rx_buf {
 
 	struct rxm_ep *ep;
 	struct rxm_conn *conn;
-	struct rxm_recv_fs *recv_fs;
+	struct rxm_recv_queue *recv_queue;
 	struct rxm_recv_entry *recv_entry;
 	struct rxm_unexp_msg unexp_msg;
 	uint64_t comp_flags;
@@ -248,20 +248,29 @@ DECLARE_FREESTACK(struct rxm_recv_entry, rxm_recv_fs);
 struct rxm_send_queue {
 	struct rxm_txe_fs *fs;
 	struct ofi_key_idx tx_key_idx;
+	fastlock_t lock;
+};
+
+enum rxm_recv_queue_type {
+	RXM_RECV_QUEUE_MSG,
+	RXM_RECV_QUEUE_TAGGED,
 };
 
 struct rxm_recv_queue {
+	enum rxm_recv_queue_type type;
 	struct rxm_recv_fs *fs;
 	struct dlist_entry recv_list;
 	struct dlist_entry unexp_msg_list;
 	dlist_func_t *match_recv;
 	dlist_func_t *match_unexp;
+	fastlock_t lock;
 };
 
 struct rxm_buf_pool {
 	struct util_buf_pool *pool;
 	struct dlist_entry buf_list;
 	uint8_t local_mr;
+	fastlock_t lock;
 };
 
 struct rxm_ep {
@@ -301,13 +310,15 @@ static inline int rxm_match_tag(uint64_t tag, uint64_t ignore, uint64_t match_ta
 }
 
 static inline uint64_t rxm_ep_tx_flags(struct fid_ep *ep_fid) {
-	struct rxm_ep *rxm_ep = container_of(ep_fid, struct rxm_ep, util_ep.ep_fid);
-	return rxm_ep->rxm_info->tx_attr->op_flags;
+	struct util_ep *util_ep = container_of(ep_fid, struct util_ep,
+					       ep_fid);
+	return util_ep->tx_op_flags;
 }
 
 static inline uint64_t rxm_ep_rx_flags(struct fid_ep *ep_fid) {
-	struct rxm_ep *rxm_ep = container_of(ep_fid, struct rxm_ep, util_ep.ep_fid);
-	return rxm_ep->rxm_info->rx_attr->op_flags;
+	struct util_ep *util_ep = container_of(ep_fid, struct util_ep,
+					       ep_fid);
+	return util_ep->rx_op_flags;
 }
 
 int rxm_fabric(struct fi_fabric_attr *attr, struct fid_fabric **fabric,
@@ -345,3 +356,9 @@ int rxm_ep_msg_mr_regv(struct rxm_ep *rxm_ep, const struct iovec *iov,
 void rxm_ep_msg_mr_closev(struct fid_mr **mr, size_t count);
 struct rxm_buf *rxm_buf_get(struct rxm_buf_pool *pool);
 void rxm_buf_release(struct rxm_buf_pool *pool, struct rxm_buf *buf);
+
+struct rxm_tx_entry *rxm_tx_entry_get(struct rxm_send_queue *queue);
+struct rxm_recv_entry *rxm_recv_entry_get(struct rxm_recv_queue *queue);
+
+void rxm_tx_entry_release(struct rxm_send_queue *queue, struct rxm_tx_entry *entry);
+void rxm_recv_entry_release(struct rxm_recv_queue *queue, struct rxm_recv_entry *entry);

@@ -390,6 +390,7 @@
     <ClCompile Include="prov\util\src\util_fabric.c" />
     <ClCompile Include="prov\util\src\util_main.c" />
     <ClCompile Include="prov\util\src\util_mr.c" />
+    <ClCompile Include="prov\util\src\util_ns.c" />
     <ClCompile Include="prov\util\src\util_poll.c" />
     <ClCompile Include="prov\util\src\util_wait.c" />
     <ClCompile Include="src\common.c" />
@@ -439,6 +440,7 @@
     <ClInclude Include="include\rdma\providers\fi_prov.h" />
     <ClInclude Include="include\windows\arpa\inet.h" />
     <ClInclude Include="include\windows\config.h" />
+    <ClInclude Include="include\windows\ifaddrs.h" />
     <ClInclude Include="include\windows\netinet\in.h" />
     <ClInclude Include="include\windows\netinet\ip.h" />
     <ClInclude Include="include\windows\netinet\tcp.h" />

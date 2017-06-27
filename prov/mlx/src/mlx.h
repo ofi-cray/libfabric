@@ -69,6 +69,7 @@ extern "C" {
 #define FI_MLX_FABRIC_NAME "mlx"
 #define FI_MLX_DEFAULT_INJECT_SIZE 1024
 #define FI_MLX_DEF_CQ_SIZE (1024)
+#define FI_MLX_DEF_MR_CNT (1 << 16)
 
 #define FI_MLX_VERSION_MINOR 4
 #define FI_MLX_VERSION_MAJOR 1
@@ -173,6 +174,8 @@ int mlx_av_open(
 /* Callbacks */
 void mlx_send_callback_no_compl( void *request, ucs_status_t status);
 void mlx_send_callback( void *request, ucs_status_t status);
+void mlx_recv_callback_no_compl(void *request, ucs_status_t status,
+				ucp_tag_recv_info_t *info);
 void mlx_recv_callback( void *request, ucs_status_t status,
 			ucp_tag_recv_info_t *info);
 #ifdef __cplusplus

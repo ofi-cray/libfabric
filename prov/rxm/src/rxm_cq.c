@@ -70,30 +70,6 @@ static const char *rxm_cq_strerror(struct fid_cq *cq_fid, int prov_errno,
 	return fi_cq_strerror(rxm_ep->msg_cq, prov_errno, err_data, buf, len);
 }
 
-static int rxm_cq_report_error(struct util_cq *util_cq, struct fi_cq_err_entry *err_entry)
-{
-	struct util_cq_err_entry *entry;
-	struct fi_cq_tagged_entry *comp;
-
-	entry = calloc(1, sizeof(*entry));
-	if (!entry) {
-		FI_WARN(&rxm_prov, FI_LOG_CQ,
-				"Unable to allocate util_cq_err_entry\n");
-		return -FI_ENOMEM;
-	}
-
-	entry->err_entry = *err_entry;
-	fastlock_acquire(&util_cq->cq_lock);
-	slist_insert_tail(&entry->list_entry, &util_cq->err_list);
-
-	comp = ofi_cirque_tail(util_cq->cirq);
-	comp->flags = UTIL_FLAG_ERROR;
-	ofi_cirque_commit(util_cq->cirq);
-	fastlock_release(&util_cq->cq_lock);
-
-	return 0;
-}
-
 int rxm_cq_comp(struct util_cq *util_cq, void *context, uint64_t flags, size_t len,
 		void *buf, uint64_t data, uint64_t tag)
 {
@@ -138,7 +114,7 @@ int rxm_finish_recv(struct rxm_rx_buf *rx_buf)
 		}
 	}
 
-	freestack_push(rx_buf->recv_fs, rx_buf->recv_entry);
+	rxm_recv_entry_release(rx_buf->recv_queue, rx_buf->recv_entry);
 	return rxm_ep_repost_buf(rx_buf);
 }
 
@@ -155,7 +131,7 @@ static int rxm_finish_send_nobuf(struct rxm_tx_entry *tx_entry)
 			return ret;
 		}
 	}
-	freestack_push(tx_entry->ep->send_queue.fs, tx_entry);
+	rxm_tx_entry_release(&tx_entry->ep->send_queue, tx_entry);
 	return 0;
 }
 
@@ -249,9 +225,11 @@ static int rxm_lmt_handle_ack(struct rxm_rx_buf *rx_buf)
 	FI_DBG(&rxm_prov, FI_LOG_CQ, "Got ACK for msg_id: 0x" PRIx64 "\n",
 			rx_buf->pkt.ctrl_hdr.msg_id);
 
+	fastlock_acquire(&rx_buf->ep->send_queue.lock);
 	index = ofi_key2idx(&rx_buf->ep->send_queue.tx_key_idx,
 			    rx_buf->pkt.ctrl_hdr.msg_id);
 	tx_entry = &rx_buf->ep->send_queue.fs->buf[index];
+	fastlock_release(&rx_buf->ep->send_queue.lock);
 
 	assert(tx_entry->msg_id == rx_buf->pkt.ctrl_hdr.msg_id);
 	assert(tx_entry->state == RXM_LMT_ACK_WAIT);
@@ -378,9 +356,9 @@ int rxm_handle_recv_comp(struct rxm_rx_buf *rx_buf)
 		return -FI_EINVAL;
 	}
 
-	rx_buf->recv_fs = recv_queue->fs;
+	rx_buf->recv_queue = recv_queue;
 
-	fastlock_acquire(&rx_buf->ep->util_ep.lock);
+	fastlock_acquire(&recv_queue->lock);
 	entry = dlist_remove_first_match(&recv_queue->recv_list,
 					 recv_queue->match_recv, &match_attr);
 	if (!entry) {
@@ -389,10 +367,10 @@ int rxm_handle_recv_comp(struct rxm_rx_buf *rx_buf)
 		rx_buf->unexp_msg.addr = match_attr.addr;
 		rx_buf->unexp_msg.tag = match_attr.tag;
 		dlist_insert_tail(&rx_buf->unexp_msg.entry, &recv_queue->unexp_msg_list);
-		fastlock_release(&rx_buf->ep->util_ep.lock);
+		fastlock_release(&recv_queue->lock);
 		return 0;
 	}
-	fastlock_release(&rx_buf->ep->util_ep.lock);
+	fastlock_release(&recv_queue->lock);
 
 	rx_buf->recv_entry = container_of(entry, struct rxm_recv_entry, entry);
 	return rxm_cq_handle_data(rx_buf);
@@ -544,7 +522,7 @@ static ssize_t rxm_cq_read(struct fid_cq *msg_cq, struct fi_cq_tagged_entry *com
 		assert(0);
 		return err_entry.err;
 	}
-	return rxm_cq_report_error(util_cq, &err_entry);
+	return ofi_cq_write_error(util_cq, &err_entry);
 }
 
 void rxm_cq_progress(struct rxm_ep *rxm_ep)

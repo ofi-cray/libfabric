@@ -351,7 +351,7 @@ struct psmx2_fid_fabric {
 	struct util_fabric	util_fabric;
 	struct psmx2_fid_domain	*active_domain;
 	psm2_uuid_t		uuid;
-	pthread_t		name_server_thread;
+	struct util_ns		name_server;
 };
 
 struct psmx2_trx_ctxt {
@@ -412,31 +412,33 @@ struct psmx2_fid_domain {
 
 	int			progress_thread_enabled;
 	pthread_t		progress_thread;
+
+	int			addr_format;
 };
 
 #define PSMX2_EP_REGULAR	0
 #define PSMX2_EP_SCALABLE	1
+#define PSMX2_EP_SRC_ADDR	2
 
-struct psmx2_ep_name {
-	psm2_epid_t		epid;
-	union {
-		uint8_t		vlane;
-		uint8_t		sep_id;
-	};
-	uint8_t			type;
-};
-
+#define PSMX2_RESERVED_EPID	(0xFFFFULL)
 #define PSMX2_DEFAULT_UNIT	(-1)
 #define PSMX2_DEFAULT_PORT	0
 #define PSMX2_ANY_SERVICE	0
 
-struct psmx2_src_name {
-	uint16_t		signature;	/* 0xFFFF, different from any valid epid */
-	int8_t			unit;		/* start from 0. -1 means any */
-	uint8_t			port;		/* start from 1. 0 means any */
-	uint32_t		service;	/* 0 means any */
-	uint64_t		padding;	/* make it the same size as psmx2_ep_name */
+struct psmx2_ep_name {
+	psm2_epid_t		epid;
+	uint8_t			type;
+	union {
+		uint8_t		vlane;		/* for regular ep */
+		uint8_t		sep_id;		/* for scalable ep */
+		int8_t		unit;		/* for src addr. start from 0. -1 means any */
+	};
+	uint8_t			port;		/* for src addr. start from 1, 0 means any */
+	uint8_t			padding;
+	uint32_t		service;	/* for src addr. 0 means any */
 };
+
+#define PSMX2_MAX_STRING_NAME_LEN	64	/* "fi_addr_psmx2://<uint64_t>:<uint64_t>"  */
 
 struct psmx2_cq_event {
 	union {
@@ -453,6 +455,8 @@ struct psmx2_cq_event {
 	struct slist_entry list_entry;
 };
 
+#define PSMX2_ERR_DATA_SIZE		64	/* large enough to hold a string address */
+
 struct psmx2_fid_cq {
 	struct fid_cq			cq;
 	struct psmx2_fid_domain		*domain;
@@ -467,7 +471,7 @@ struct psmx2_fid_cq {
 	struct util_wait		*wait;
 	int				wait_cond;
 	int				wait_is_local;
-	uint64_t			error_data[4];
+	uint8_t				error_data[PSMX2_ERR_DATA_SIZE];
 };
 
 enum psmx2_triggered_op {
@@ -732,6 +736,7 @@ struct psmx2_fid_av {
 	struct psmx2_fid_domain	*domain;
 	struct fid_eq		*eq;
 	int			type;
+	int			addr_format;
 	int			rx_ctx_bits;
 	uint64_t		flags;
 	size_t			addrlen;
@@ -946,18 +951,30 @@ int	psmx2_domain_enable_ep(struct psmx2_fid_domain *domain, struct psmx2_fid_ep 
 
 void	psmx2_trx_ctxt_free(struct psmx2_trx_ctxt *trx_ctxt);
 struct	psmx2_trx_ctxt *psmx2_trx_ctxt_alloc(struct psmx2_fid_domain *domain,
-					     struct psmx2_src_name *src_addr,
+					     struct psmx2_ep_name *src_addr,
 					     int sep_ctxt_idx);
 
-void	psmx2_ns_start_server(struct psmx2_fid_fabric *fabric);
-void	psmx2_ns_stop_server(struct psmx2_fid_fabric *fabric);
-void	psmx2_ns_add_local_name(int service, struct psmx2_ep_name *name);
-void	psmx2_ns_del_local_name(int service, struct psmx2_ep_name *name);
-void	*psmx2_ns_resolve_name(const char *server, int *service);
 
+static inline
+int	psmx2_ns_service_cmp(void *svc1, void *svc2)
+{
+	int service1 = *(int *)svc1, service2 = *(int *)svc2;
+	if (service1 == PSMX2_ANY_SERVICE ||
+	    service2 == PSMX2_ANY_SERVICE)
+		return 0;
+	return (service1 < service2) ?
+		-1 : (service1 > service2);
+}
+static inline
+int	psmx2_ns_is_service_wildcard(void *svc)
+{
+	return (*(int *)svc == PSMX2_ANY_SERVICE);
+}
 void	psmx2_get_uuid(psm2_uuid_t uuid);
 int	psmx2_uuid_to_port(psm2_uuid_t uuid);
 char	*psmx2_uuid_to_string(psm2_uuid_t uuid);
+void	*psmx2_ep_name_to_string(const struct psmx2_ep_name *name, size_t *len);
+struct	psmx2_ep_name *psmx2_string_to_ep_name(const void *s);
 int	psmx2_errno(int err);
 void	psmx2_query_mpi(void);
 
@@ -1021,8 +1038,23 @@ static inline void psmx2_get_source_name(fi_addr_t source, struct psmx2_ep_name 
 {
 	psm2_epaddr_t epaddr = PSMX2_ADDR_TO_EP(source);
 
+	memset(name, 0, sizeof(*name));
 	name->epid = psmx2_epaddr_to_epid(epaddr);
 	name->vlane = PSMX2_ADDR_TO_VL(source);
+	name->type = PSMX2_EP_REGULAR;
+}
+
+static inline void psmx2_get_source_string_name(fi_addr_t source, char *name, size_t *len)
+{
+	struct psmx2_ep_name ep_name;
+	psm2_epaddr_t epaddr = PSMX2_ADDR_TO_EP(source);
+
+	memset(&ep_name, 0, sizeof(ep_name));
+	ep_name.epid = psmx2_epaddr_to_epid(epaddr);
+	ep_name.vlane = PSMX2_ADDR_TO_VL(source);
+	ep_name.type = PSMX2_EP_REGULAR;
+
+	ofi_straddr(name, len, FI_ADDR_PSMX2, &ep_name);
 }
 
 static inline void psmx2_progress(struct psmx2_trx_ctxt *trx_ctxt)

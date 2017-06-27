@@ -36,6 +36,7 @@
 
 #include <winsock2.h>
 #include <iphlpapi.h>
+#include <ifaddrs.h>
 
 #include "fi.h"
 #include "fi_osd.h"
@@ -285,25 +286,31 @@ ssize_t recvmsg(int sd, struct msghdr *msg, int flags)
 	assert(msg);
 	assert(msg->msg_iov);
 
-	for(i = 0, len = 0; i < msg->msg_iovlen; i++)
-		len += msg->msg_iov[i].iov_len;
+	if (msg->msg_iovlen > 1) {
+		for (i = 0, len = 0; i < msg->msg_iovlen; i++)
+			len += msg->msg_iov[i].iov_len;
 
-	buffer = (char*)malloc(len);
-	if(!buffer)
-		goto fn_nomem;
+		buffer = (char*)malloc(len);
+		if (!buffer)
+			goto fn_nomem;
+	} else {
+		buffer = msg->msg_iov[0].iov_base;
+		len = msg->msg_iov[0].iov_len;
+	}
 
-	received = recvfrom(sd, buffer, len, flags,
+	received = recvfrom(sd, buffer, (int)len, flags,
 		(struct sockaddr *)msg->msg_name, &msg->msg_namelen);
 
 	for(i = 0, offset = 0; i < msg->msg_iovlen && offset < received; i++) {
-		ssize_t chunk_len = MIN(received - offset, msg->msg_iov[i].iov_len);
+		ssize_t chunk_len = MIN(received - offset, (ssize_t)msg->msg_iov[i].iov_len);
 		assert(msg->msg_iov[i].iov_base);
 		memcpy(msg->msg_iov[i].iov_base, buffer + offset, chunk_len);
 		offset += chunk_len;
 	}
 	read = received;
 
-	free(buffer);
+	if (msg->msg_iovlen > 1)
+		free(buffer);
 
 fn_complete:
 	return read;
@@ -324,14 +331,19 @@ ssize_t sendmsg(int sd, struct msghdr *msg, int flags)
 	assert(msg);
 	assert(msg->msg_iov);
 
-	/* calculate common length of data */
-	for(i = 0; i < msg->msg_iovlen; i++)
-		len += msg->msg_iov[i].iov_len;
+	if (msg->msg_iovlen > 1) {
+		/* calculate common length of data */
+		for (i = 0; i < msg->msg_iovlen; i++)
+			len += msg->msg_iov[i].iov_len;
 
-	/* allocate temp buffer */
-	buffer = (char*)malloc(len);
-	if(!buffer)
-		goto fn_nomem;
+		/* allocate temp buffer */
+		buffer = (char*)malloc(len);
+		if (!buffer)
+			goto fn_nomem;
+	} else {
+		buffer = msg->msg_iov[0].iov_base;
+		len = msg->msg_iov[0].iov_len;
+	}
 
 	/* copy data to temp buffer */
 	for(i = 0, offset = 0; i < msg->msg_iovlen; i++) {
@@ -343,10 +355,11 @@ ssize_t sendmsg(int sd, struct msghdr *msg, int flags)
 	}
 
 	/* send data */
-	sent = sendto(sd, buffer, len, flags,
+	sent = sendto(sd, buffer, (int)len, flags,
 		(struct sockaddr *)msg->msg_name, msg->msg_namelen);
 
-	free(buffer);
+	if (msg->msg_iovlen > 1)
+		free(buffer);
 
 fn_complete:
 	return sent;
@@ -396,5 +409,77 @@ failed_get_addr:
 failed_no_mem:
 failed:
 	return;
+}
+
+int getifaddrs(struct ifaddrs **ifap)
+{
+	DWORD i;
+	MIB_IPADDRTABLE _iptbl;
+	MIB_IPADDRTABLE *iptbl = &_iptbl;
+	ULONG ips = 1;
+	ULONG res = GetIpAddrTable(iptbl, &ips, 0);
+	int ret = -1;
+	struct ifaddrs *head = NULL;
+
+	assert(ifap);
+
+	if (res == ERROR_INSUFFICIENT_BUFFER) {
+		iptbl = malloc(ips);
+		if (!iptbl)
+			goto failed_no_mem;
+		res = GetIpAddrTable(iptbl, &ips, 0);
+		if (res != NO_ERROR)
+			goto failed_get_addr;
+	} else if (res != NO_ERROR) {
+		goto failed;
+	}
+
+	for (i = 0; i < iptbl->dwNumEntries; i++) {
+		if (iptbl->table[i].dwAddr && iptbl->table[i].dwAddr != ntohl(INADDR_LOOPBACK)) {
+			struct ifaddrs *fa = calloc(sizeof(*fa), 1);
+			if (!fa)
+				goto failed_cant_allocate;
+			fa->ifa_flags = IFF_UP;
+			fa->ifa_addr = (struct sockaddr *)&fa->in_addr;
+			fa->ifa_netmask = (struct sockaddr *)&fa->in_netmask;
+			fa->ifa_name = fa->ad_name;
+
+			fa->in_addr.sin_family = fa->in_netmask.sin_family = AF_INET;
+			fa->in_addr.sin_addr.s_addr = iptbl->table[i].dwAddr;
+			fa->in_netmask.sin_addr.s_addr = iptbl->table[i].dwMask;
+			/* on Windows there is no Unix-like interface names,
+			   so, let's generate fake names */
+			sprintf_s(fa->ad_name, sizeof(fa->ad_name), "eth%d", i);
+
+			fa->ifa_next = head;
+			head = fa;
+		}
+	}
+
+	if (iptbl != &_iptbl)
+		free(iptbl);
+	ret = 0;
+	if (ifap)
+		*ifap = head;
+complete:
+	return ret;
+
+failed_cant_allocate:
+	if(head)
+		freeifaddrs(head);
+failed_get_addr:
+	free(iptbl);
+failed_no_mem:
+failed:
+	goto complete;
+}
+
+void freeifaddrs(struct ifaddrs *ifa)
+{
+	while (ifa) {
+		struct ifaddrs *next = ifa->ifa_next;
+		free(ifa);
+		ifa = next;
+	}
 }
 

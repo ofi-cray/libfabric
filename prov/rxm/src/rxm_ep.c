@@ -57,6 +57,14 @@ static int rxm_match_recv_entry_tagged(struct dlist_entry *item, const void *arg
 		rxm_match_tag(recv_entry->tag, recv_entry->ignore, attr->tag);
 }
 
+static int rxm_match_recv_entry_context(struct dlist_entry *item, const void *context)
+{
+	struct rxm_recv_entry *recv_entry;
+
+	recv_entry = container_of(item, struct rxm_recv_entry, entry);
+	return recv_entry->context == context;
+}
+
 static int rxm_match_unexp_msg(struct dlist_entry *item, const void *arg)
 {
 	struct rxm_recv_match_attr *attr = (struct rxm_recv_match_attr *)arg;
@@ -96,8 +104,10 @@ static int rxm_mr_buf_reg(void *pool_ctx, void *addr, size_t len, void **context
 
 void rxm_buf_release(struct rxm_buf_pool *pool, struct rxm_buf *buf)
 {
+	fastlock_acquire(&pool->lock);
 	dlist_remove(&buf->entry);
 	util_buf_release(pool->pool, buf);
+	fastlock_release(&pool->lock);
 }
 
 struct rxm_buf *rxm_buf_get(struct rxm_buf_pool *pool)
@@ -105,14 +115,20 @@ struct rxm_buf *rxm_buf_get(struct rxm_buf_pool *pool)
 	struct rxm_buf *buf;
 	struct fid_mr *mr = NULL;
 
+	fastlock_acquire(&pool->lock);
 	if (pool->local_mr)
 		buf = util_buf_alloc_ex(pool->pool, (void **)&mr);
 	else
 		buf = util_buf_alloc(pool->pool);
-	if (!buf)
+	if (!buf) {
+		fastlock_release(&pool->lock);
 		return NULL;
+	}
 	memset(buf, 0, sizeof(*buf));
+
 	dlist_insert_tail(&buf->entry, &pool->buf_list);
+	fastlock_release(&pool->lock);
+
 	if (pool->local_mr && mr)
 		buf->desc = fi_mr_desc(mr);
 	return buf;
@@ -130,7 +146,7 @@ static void rxm_buf_pool_destroy(struct rxm_buf_pool *pool)
 		(void)fi_cancel(&buf->msg_ep->fid, buf);
 		rxm_buf_release(pool, buf);
 	}
-
+	fastlock_destroy(&pool->lock);
 	util_buf_pool_destroy(pool->pool);
 }
 
@@ -146,6 +162,7 @@ static int rxm_buf_pool_create(int local_mr, size_t count, size_t size,
 	}
 	dlist_init(&pool->buf_list);
 	pool->local_mr = local_mr;
+	fastlock_init(&pool->lock);
 	return 0;
 }
 
@@ -156,21 +173,28 @@ static int rxm_send_queue_init(struct rxm_send_queue *send_queue, size_t size)
 		return -FI_ENOMEM;
 
 	ofi_key_idx_init(&send_queue->tx_key_idx, fi_size_bits(size));
+	fastlock_init(&send_queue->lock);
 	return 0;
 }
 
 static int rxm_recv_queue_init(struct rxm_recv_queue *recv_queue, size_t size,
-			       dlist_func_t match_recv,
-			       dlist_func_t match_unexp)
+			       enum rxm_recv_queue_type type)
 {
+	recv_queue->type = type;
 	recv_queue->fs = rxm_recv_fs_create(size);
 	if (!recv_queue->fs)
 		return -FI_ENOMEM;
 
 	dlist_init(&recv_queue->recv_list);
 	dlist_init(&recv_queue->unexp_msg_list);
-	recv_queue->match_recv = match_recv;
-	recv_queue->match_unexp = match_unexp;
+	if (type == RXM_RECV_QUEUE_MSG) {
+		recv_queue->match_recv = rxm_match_recv_entry;
+		recv_queue->match_unexp = rxm_match_unexp_msg;
+	} else {
+		recv_queue->match_recv = rxm_match_recv_entry_tagged;
+		recv_queue->match_unexp = rxm_match_unexp_msg_tagged;
+	}
+	fastlock_init(&recv_queue->lock);
 	return 0;
 }
 
@@ -178,12 +202,14 @@ static void rxm_send_queue_close(struct rxm_send_queue *send_queue)
 {
 	if (send_queue->fs)
 		rxm_txe_fs_free(send_queue->fs);
+	fastlock_destroy(&send_queue->lock);
 }
 
 static void rxm_recv_queue_close(struct rxm_recv_queue *recv_queue)
 {
 	if (recv_queue->fs)
 		rxm_recv_fs_free(recv_queue->fs);
+	fastlock_destroy(&recv_queue->lock);
 	// TODO cleanup recv_list and unexp msg list
 }
 
@@ -216,13 +242,12 @@ static int rxm_ep_txrx_res_open(struct rxm_ep *rxm_ep)
 		goto err2;
 
 	ret = rxm_recv_queue_init(&rxm_ep->recv_queue, rxm_ep->rxm_info->rx_attr->size,
-				  rxm_match_recv_entry, rxm_match_unexp_msg);
+				  RXM_RECV_QUEUE_MSG);
 	if (ret)
 		goto err3;
 
 	ret = rxm_recv_queue_init(&rxm_ep->trecv_queue, rxm_ep->rxm_info->rx_attr->size,
-				  rxm_match_recv_entry_tagged,
-				  rxm_match_unexp_msg_tagged);
+				  RXM_RECV_QUEUE_TAGGED);
 	if (ret)
 		goto err4;
 
@@ -328,9 +353,55 @@ int rxm_setopt(fid_t fid, int level, int optname,
 	return -FI_ENOPROTOOPT;
 }
 
+static int rxm_ep_cancel_recv(struct rxm_ep *rxm_ep,
+			      struct rxm_recv_queue *recv_queue, void *context)
+{
+	struct fi_cq_err_entry err_entry;
+	struct rxm_recv_entry *recv_entry;
+	struct dlist_entry *entry;
+
+	fastlock_acquire(&recv_queue->lock);
+	entry = dlist_remove_first_match(&recv_queue->recv_list,
+					 rxm_match_recv_entry_context,
+					 context);
+	fastlock_release(&recv_queue->lock);
+	if (entry) {
+		recv_entry = container_of(entry, struct rxm_recv_entry, entry);
+		memset(&err_entry, 0, sizeof(err_entry));
+		err_entry.op_context = recv_entry->context;
+		if (recv_queue->type == RXM_RECV_QUEUE_TAGGED) {
+			err_entry.flags |= FI_TAGGED | FI_RECV;
+			err_entry.tag = recv_entry->tag;
+		} else {
+			err_entry.flags = FI_MSG | FI_RECV;
+		}
+		err_entry.err = FI_ECANCELED;
+		err_entry.prov_errno = -FI_ECANCELED;
+		rxm_recv_entry_release(recv_queue, recv_entry);
+		return ofi_cq_write_error(rxm_ep->util_ep.rx_cq, &err_entry);
+	}
+	return 0;
+}
+
+static ssize_t rxm_ep_cancel(fid_t fid_ep, void *context)
+{
+	struct rxm_ep *rxm_ep = container_of(fid_ep, struct rxm_ep, util_ep.ep_fid);
+	int ret;
+
+	ret = rxm_ep_cancel_recv(rxm_ep, &rxm_ep->recv_queue, context);
+	if (ret)
+		return ret;
+
+	ret = rxm_ep_cancel_recv(rxm_ep, &rxm_ep->trecv_queue, context);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
 static struct fi_ops_ep rxm_ops_ep = {
 	.size = sizeof(struct fi_ops_ep),
-	.cancel = fi_no_cancel,
+	.cancel = rxm_ep_cancel,
 	.getopt = rxm_getopt,
 	.setopt = rxm_setopt,
 	.tx_ctx = fi_no_tx_ctx,
@@ -339,39 +410,32 @@ static struct fi_ops_ep rxm_ops_ep = {
 	.tx_size_left = fi_no_tx_size_left,
 };
 
+/* Caller must hold recv_queue->lock */
 static int rxm_check_unexp_msg_list(struct rxm_ep *rxm_ep,
 				    struct rxm_recv_queue *recv_queue,
-				    struct rxm_recv_entry *recv_entry)
+				    struct rxm_recv_entry *recv_entry,
+				    struct rxm_rx_buf **rx_buf)
 {
-	struct dlist_entry *entry;
-	struct rxm_unexp_msg *unexp_msg;
 	struct rxm_recv_match_attr match_attr;
-	struct rxm_rx_buf *rx_buf;
+	struct dlist_entry *entry;
 
-	fastlock_acquire(&rxm_ep->util_ep.lock);
-
-	if (dlist_empty(&recv_queue->unexp_msg_list)) {
-		fastlock_release(&rxm_ep->util_ep.lock);
+	if (dlist_empty(&recv_queue->unexp_msg_list))
 		return -FI_EAGAIN;
-	}
 
 	match_attr.addr = recv_entry->addr;
-	match_attr.tag = recv_entry->tag;
+	if (recv_queue->type == RXM_RECV_QUEUE_TAGGED)
+		match_attr.tag = recv_entry->tag;
 	match_attr.ignore = recv_entry->ignore;
 
 	entry = dlist_remove_first_match(&recv_queue->unexp_msg_list,
 					 recv_queue->match_unexp, &match_attr);
-	fastlock_release(&rxm_ep->util_ep.lock);
 	if (!entry)
 		return -FI_EAGAIN;
 
-	FI_DBG(&rxm_prov, FI_LOG_EP_DATA, "Match for posted recv found in unexp msg list\n");
-
-	unexp_msg = container_of(entry, struct rxm_unexp_msg, entry);
-	rx_buf = container_of(unexp_msg, struct rxm_rx_buf, unexp_msg);
-	rx_buf->recv_entry = recv_entry;
-
-	return rxm_cq_handle_data(rx_buf);
+	FI_DBG(&rxm_prov, FI_LOG_EP_DATA,
+	       "Match for posted recv found in unexp msg list\n");
+	*rx_buf = container_of(entry, struct rxm_rx_buf, unexp_msg.entry);
+	return 0;
 }
 
 static int rxm_ep_recv_common(struct rxm_ep *rxm_ep, const struct iovec *iov,
@@ -380,44 +444,47 @@ static int rxm_ep_recv_common(struct rxm_ep *rxm_ep, const struct iovec *iov,
 			      uint64_t flags, struct rxm_recv_queue *recv_queue)
 {
 	struct rxm_recv_entry *recv_entry;
+	struct rxm_rx_buf *rx_buf;
 	int ret;
 	size_t i;
 
-	if (freestack_isempty(recv_queue->fs)) {
-		FI_WARN(&rxm_prov, FI_LOG_CQ, "Exhausted recv_entry freestack\n");
+	if (!(recv_entry = rxm_recv_entry_get(recv_queue)))
 		return -FI_EAGAIN;
-	}
-
-	recv_entry = freestack_pop(recv_queue->fs);
 
 	for (i = 0; i < count; i++) {
 		recv_entry->iov[i].iov_base = iov[i].iov_base;
 		recv_entry->iov[i].iov_len = iov[i].iov_len;
 		if (desc)
 			recv_entry->desc[i] = desc[i];
-		FI_DBG(&rxm_prov, FI_LOG_EP_CTRL, "post recv: %u\n",
-			iov[i].iov_len);
 	}
 	recv_entry->count 	= count;
 	recv_entry->addr 	= (rxm_ep->rxm_info->caps & FI_DIRECTED_RECV) ?
 				  src_addr : FI_ADDR_UNSPEC;
 	recv_entry->context 	= context;
 	recv_entry->flags 	= flags;
-	recv_entry->tag 	= tag;
 	recv_entry->ignore 	= ignore;
+	if (recv_queue->type == RXM_RECV_QUEUE_TAGGED)
+		recv_entry->tag = tag;
 
-	ret = rxm_check_unexp_msg_list(rxm_ep, recv_queue, recv_entry);
-	if (ret == -FI_EAGAIN) {
-		fastlock_acquire(&rxm_ep->util_ep.lock);
-		dlist_insert_tail(&recv_entry->entry,
-				  &recv_queue->recv_list);
-		fastlock_release(&rxm_ep->util_ep.lock);
-	} else if (ret) {
-		FI_WARN(&rxm_prov, FI_LOG_EP_DATA,
-				"Unable to check unexp msg list\n");
-		return ret;
+	fastlock_acquire(&recv_queue->lock);
+	ret = rxm_check_unexp_msg_list(rxm_ep, recv_queue, recv_entry, &rx_buf);
+	if (ret) {
+		if (ret == -FI_EAGAIN) {
+			dlist_insert_tail(&recv_entry->entry,
+					  &recv_queue->recv_list);
+			ret = 0;
+		} else {
+			FI_WARN(&rxm_prov, FI_LOG_EP_DATA,
+					"Unable to check unexp msg list\n");
+			freestack_push(recv_queue->fs, recv_entry);
+		}
+		fastlock_release(&recv_queue->lock);
+	} else {
+		fastlock_release(&recv_queue->lock);
+		rx_buf->recv_entry = recv_entry;
+		ret = rxm_cq_handle_data(rx_buf);
 	}
-	return 0;
+	return ret;
 }
 
 static ssize_t rxm_ep_recvmsg(struct fid_ep *ep_fid, const struct fi_msg *msg,
@@ -560,12 +627,9 @@ static ssize_t rxm_ep_send_common(struct fid_ep *ep_fid, const struct iovec *iov
 		return -FI_EAGAIN;
 	}
 
-	if (freestack_isempty(rxm_ep->send_queue.fs)) {
-		FI_WARN(&rxm_prov, FI_LOG_CQ, "Exhausted tx_entry freestack\n");
+	if (!(tx_entry = rxm_tx_entry_get(&rxm_ep->send_queue)))
 		return -FI_EAGAIN;
-	}
 
-	tx_entry = freestack_pop(rxm_ep->send_queue.fs);
 	tx_entry->ep = rxm_ep;
 	tx_entry->count = count;
 	tx_entry->context = context;
@@ -598,9 +662,11 @@ static ssize_t rxm_ep_send_common(struct fid_ep *ep_fid, const struct iovec *iov
 			ret = -FI_EMSGSIZE;
 			goto done;
 		}
+		fastlock_acquire(&rxm_ep->send_queue.lock);
 		tx_entry->msg_id = ofi_idx2key(&rxm_ep->send_queue.tx_key_idx,
 					       rxm_txe_fs_index(rxm_ep->send_queue.fs,
 								tx_entry));
+		fastlock_release(&rxm_ep->send_queue.lock);
 		pkt->ctrl_hdr.msg_id = tx_entry->msg_id;
 		pkt->ctrl_hdr.type = ofi_ctrl_large_data;
 
@@ -660,7 +726,7 @@ static ssize_t rxm_ep_send_common(struct fid_ep *ep_fid, const struct iovec *iov
 	return 0;
 done:
 	rxm_buf_release(&rxm_ep->tx_pool, (struct rxm_buf *)tx_buf);
-	freestack_push(rxm_ep->send_queue.fs, tx_entry);
+	rxm_tx_entry_release(&rxm_ep->send_queue, tx_entry);
 	return ret;
 }
 
@@ -917,48 +983,6 @@ static int rxm_ep_close(struct fid *fid)
 	return ret;
 }
 
-static int rxm_ep_bind_cq(struct rxm_ep *rxm_ep, struct util_cq *util_cq, uint64_t flags)
-{
-	int ret;
-
-	if (flags & ~(FI_TRANSMIT | FI_RECV | FI_SELECTIVE_COMPLETION)) {
-		FI_WARN(&rxm_prov, FI_LOG_EP_CTRL, "unsupported flags\n");
-		return -FI_EBADFLAGS;
-	}
-
-	if (((flags & FI_TRANSMIT) && rxm_ep->util_ep.tx_cq) ||
-	    ((flags & FI_RECV) && rxm_ep->util_ep.rx_cq)) {
-		FI_WARN(&rxm_prov, FI_LOG_EP_CTRL, "duplicate CQ binding\n");
-		return -FI_EINVAL;
-	}
-
-	if (flags & FI_TRANSMIT) {
-		rxm_ep->util_ep.tx_cq = util_cq;
-
-		if (!(flags & FI_SELECTIVE_COMPLETION))
-			rxm_ep->rxm_info->tx_attr->op_flags |= FI_COMPLETION;
-
-		ofi_atomic_inc32(&util_cq->ref);
-	}
-
-	if (flags & FI_RECV) {
-		rxm_ep->util_ep.rx_cq = util_cq;
-
-		if (!(flags & FI_SELECTIVE_COMPLETION))
-			rxm_ep->rxm_info->rx_attr->op_flags |= FI_COMPLETION;
-
-		ofi_atomic_inc32(&util_cq->ref);
-	}
-	if (flags & (FI_TRANSMIT | FI_RECV)) {
-		ret = fid_list_insert(&util_cq->ep_list,
-				      &util_cq->ep_list_lock,
-				      &rxm_ep->util_ep.ep_fid.fid);
-		if (ret)
-			return ret;
-	}
-	return 0;
-}
-
 static int rxm_ep_bind(struct fid *ep_fid, struct fid *bfid, uint64_t flags)
 {
 	struct rxm_ep *rxm_ep;
@@ -977,8 +1001,10 @@ static int rxm_ep_bind(struct fid *ep_fid, struct fid *bfid, uint64_t flags)
 			return -FI_ENOMEM;
 		break;
 	case FI_CLASS_CQ:
-		ret = rxm_ep_bind_cq(rxm_ep, container_of(bfid, struct util_cq,
-					cq_fid.fid), flags);
+		ret = ofi_ep_bind_cq(&rxm_ep->util_ep,
+				     container_of(bfid, struct util_cq,
+						  cq_fid.fid),
+				     flags);
 		break;
 	case FI_CLASS_EQ:
 		break;

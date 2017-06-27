@@ -44,23 +44,22 @@
 #define VERBS_ANY_FABRIC "Any RDMA fabric"
 
 #define VERBS_MSG_CAPS (FI_MSG | FI_RMA | FI_ATOMICS | FI_READ | FI_WRITE | \
-			FI_SEND | FI_RECV | FI_REMOTE_READ | FI_REMOTE_WRITE)
+			FI_SEND | FI_RECV | FI_REMOTE_READ | FI_REMOTE_WRITE | \
+			FI_LOCAL_COMM | FI_REMOTE_COMM)
 
 #define VERBS_RDM_CAPS (FI_MSG | FI_RMA | FI_TAGGED | FI_READ | FI_WRITE |	\
 			FI_RECV | FI_MULTI_RECV | FI_SEND | FI_REMOTE_READ |	\
 			FI_REMOTE_WRITE )
 
-#define VERBS_MODE (FI_LOCAL_MR)
 #define VERBS_RDM_MODE (FI_CONTEXT)
 
 #define VERBS_TX_OP_FLAGS (FI_INJECT | FI_COMPLETION | FI_TRANSMIT_COMPLETE)
 #define VERBS_TX_OP_FLAGS_IWARP (FI_INJECT | FI_COMPLETION)
 #define VERBS_TX_OP_FLAGS_IWARP_RDM (VERBS_TX_OP_FLAGS)
 
-#define VERBS_TX_MODE VERBS_MODE
 #define VERBS_TX_RDM_MODE VERBS_RDM_MODE
 
-#define VERBS_RX_MODE (FI_LOCAL_MR | FI_RX_CQ_DATA)
+#define VERBS_RX_MODE (FI_RX_CQ_DATA)
 
 #define VERBS_RX_RDM_OP_FLAGS (FI_COMPLETION)
 
@@ -112,7 +111,7 @@ const struct fi_rx_attr verbs_rx_attr = {
 };
 
 const struct fi_rx_attr verbs_rdm_rx_attr = {
-	.mode			= VERBS_RX_MODE,
+	.mode			= VERBS_RDM_MODE | VERBS_RX_MODE,
 	.op_flags		= VERBS_RX_RDM_OP_FLAGS,
 	.msg_order		= VERBS_MSG_ORDER,
 	.total_buffered_recv	= 0,
@@ -120,7 +119,7 @@ const struct fi_rx_attr verbs_rdm_rx_attr = {
 };
 
 const struct fi_tx_attr verbs_tx_attr = {
-	.mode			= VERBS_TX_MODE,
+	.mode			= 0,
 	.op_flags		= VERBS_TX_OP_FLAGS,
 	.msg_order		= VERBS_MSG_ORDER,
 	.comp_order		= FI_ORDER_STRICT,
@@ -260,8 +259,8 @@ int fi_ibv_check_rx_attr(const struct fi_rx_attr *attr,
 
 	compare_mode = attr->mode ? attr->mode : hints->mode;
 
-	check_mode = FI_IBV_EP_TYPE_IS_RDM(info) ? VERBS_RDM_MODE :
-		(hints->caps & FI_RMA) ? info->rx_attr->mode : VERBS_MODE;
+	check_mode = (hints->caps & FI_RMA) ? info->rx_attr->mode :
+		(info->rx_attr->mode & ~FI_RX_CQ_DATA);
 
 	if ((compare_mode & check_mode) != check_mode) {
 		VERBS_INFO(FI_LOG_CORE,
@@ -602,6 +601,7 @@ static int fi_ibv_get_device_attrs(struct ibv_context *ctx, struct fi_info *info
 	info->domain_attr->rx_ctx_cnt 		= MIN(info->domain_attr->rx_ctx_cnt, device_attr.max_qp);
 	info->domain_attr->max_ep_tx_ctx 	= device_attr.max_qp;
 	info->domain_attr->max_ep_rx_ctx 	= device_attr.max_qp;
+	info->domain_attr->mr_cnt		= device_attr.max_mr;
 	if (info->ep_attr->type == FI_EP_RDM)
 		info->domain_attr->cntr_cnt	= device_attr.max_qp * 4;
 
@@ -669,7 +669,6 @@ static int fi_ibv_alloc_info(struct ibv_context *ctx, struct fi_info **info,
 		fi->mode	= VERBS_RDM_MODE;
 		*(fi->tx_attr)	= verbs_rdm_tx_attr;
 	} else {
-		fi->mode	= VERBS_MODE;
 		*(fi->tx_attr)	= verbs_tx_attr;
 	}
 
@@ -677,6 +676,10 @@ static int fi_ibv_alloc_info(struct ibv_context *ctx, struct fi_info **info,
 				? verbs_rdm_rx_attr : verbs_rx_attr;
 	*(fi->ep_attr)		= verbs_ep_attr;
 	*(fi->domain_attr)	= verbs_domain_attr;
+
+	if (ep_dom->type == FI_EP_RDM)
+		fi->domain_attr->mr_mode &= ~FI_MR_LOCAL;
+
 	*(fi->fabric_attr)	= verbs_fabric_attr;
 
 	fi->ep_attr->type	= ep_dom->type;
@@ -771,9 +774,9 @@ static void fi_ibv_verbs_devs_free(struct dlist_entry *verbs_devs)
 	struct verbs_addr *addr;
 
 	while (!dlist_empty(verbs_devs)) {
-		dlist_pop_front_container(verbs_devs, dev, entry);
+		dlist_pop_front(verbs_devs, struct verbs_dev_info, dev, entry);
 		while (!dlist_empty(&dev->addrs)) {
-			dlist_pop_front_container(&dev->addrs, addr, entry);
+			dlist_pop_front(&dev->addrs, struct verbs_addr, addr, entry);
 			rdma_freeaddrinfo(addr->rai);
 			free(addr);
 		}
@@ -795,7 +798,7 @@ static int fi_ibv_add_rai(struct dlist_entry *verbs_devs, struct rdma_cm_id *id,
 	addr->rai = rai;
 
 	dev_name = ibv_get_device_name(id->verbs->device);
-	dlist_foreach_container(verbs_devs, dev, entry)
+	dlist_foreach_container(verbs_devs, struct verbs_dev_info, dev, entry)
 		if (!strcmp(dev_name, dev->name))
 			goto add_rai;
 
@@ -932,9 +935,9 @@ static int fi_ibv_get_srcaddr_devs(struct fi_info **info)
 	}
 
 	for (fi = *info; fi; fi = fi->next) {
-		dlist_foreach_container(&verbs_devs, dev, entry)
+		dlist_foreach_container(&verbs_devs, struct verbs_dev_info, dev, entry)
 			if (!strncmp(fi->domain_attr->name, dev->name, strlen(dev->name))) {
-				dlist_foreach_container(&dev->addrs, addr, entry) {
+				dlist_foreach_container(&dev->addrs, struct verbs_addr, addr, entry) {
 					/* When a device has multiple interfaces/addresses configured
 					 * duplicate fi_info and add the address info. fi->src_addr
 					 * would have been set in the previous iteration */
@@ -1009,13 +1012,6 @@ static void fi_ibv_sockaddr_set_port(struct sockaddr *sa, uint16_t port)
 	}
 }
 
-static inline int fi_ibv_is_loopback(struct sockaddr *addr)
-{
-	assert(addr);
-	return addr->sa_family == AF_INET &&
-	       ((struct sockaddr_in *)addr)->sin_addr.s_addr == ntohl(INADDR_LOOPBACK);
-}
-
 static int fi_ibv_fill_addr(struct rdma_addrinfo *rai, struct fi_info **info,
 		struct rdma_cm_id *id)
 {
@@ -1023,7 +1019,7 @@ static int fi_ibv_fill_addr(struct rdma_addrinfo *rai, struct fi_info **info,
 	struct sockaddr *local_addr;
 	int ret;
 
-	if (rai->ai_src_addr && !fi_ibv_is_loopback(rai->ai_src_addr))
+	if (rai->ai_src_addr && !ofi_is_loopback_addr(rai->ai_src_addr))
 		goto rai_to_fi;
 
 	if (!id->verbs)

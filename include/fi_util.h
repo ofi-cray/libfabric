@@ -58,6 +58,8 @@
 #include <fi_osd.h>
 #include <fi_indexer.h>
 
+#include "rbtree.h"
+
 #ifndef _FI_UTIL_H_
 #define _FI_UTIL_H_
 
@@ -209,9 +211,11 @@ struct util_ep {
 
 	struct util_av		*av;
 	struct dlist_entry	av_entry;
-	struct util_cq		*rx_cq;
-	struct util_cq		*tx_cq;
 	struct util_eq		*eq;
+	struct util_cq		*rx_cq;
+	uint64_t		rx_op_flags;
+	struct util_cq		*tx_cq;
+	uint64_t		tx_op_flags;
 
 	uint64_t		caps;
 	uint64_t		flags;
@@ -222,6 +226,7 @@ struct util_ep {
 
 int ofi_ep_bind_av(struct util_ep *util_ep, struct util_av *av);
 int ofi_ep_bind_eq(struct util_ep *ep, struct util_eq *eq);
+int ofi_ep_bind_cq(struct util_ep *ep, struct util_cq *cq, uint64_t flags);
 int ofi_endpoint_init(struct fid_domain *domain, const struct util_prov *util_prov,
 		      struct fi_info *info, struct util_ep *ep, void *context,
 		      ofi_ep_progress_func progress);
@@ -271,6 +276,8 @@ struct util_cq {
 int ofi_cq_init(const struct fi_provider *prov, struct fid_domain *domain,
 		 struct fi_cq_attr *attr, struct util_cq *cq,
 		 ofi_cq_progress_func progress, void *context);
+int ofi_check_bind_cq_flags(struct util_ep *ep, struct util_cq *cq,
+			    uint64_t flags);
 void ofi_cq_progress(struct util_cq *cq);
 int ofi_cq_cleanup(struct util_cq *cq);
 ssize_t ofi_cq_read(struct fid_cq *cq_fid, void *buf, size_t count);
@@ -283,6 +290,8 @@ ssize_t ofi_cq_sread(struct fid_cq *cq_fid, void *buf, size_t count,
 ssize_t ofi_cq_sreadfrom(struct fid_cq *cq_fid, void *buf, size_t count,
 		fi_addr_t *src_addr, const void *cond, int timeout);
 int ofi_cq_signal(struct fid_cq *cq_fid);
+int ofi_cq_write_error(struct util_cq *cq,
+		       const struct fi_cq_err_entry *err_entry);
 
 /*
  * Counter
@@ -341,6 +350,7 @@ int ofi_av_init(struct util_domain *domain,
 int ofi_av_close(struct util_av *av);
 
 int ofi_av_insert_addr(struct util_av *av, const void *addr, int slot, int *index);
+int ofi_av_remove_addr(struct util_av *av, int slot, int index);
 int ofi_av_lookup_index(struct util_av *av, const void *addr, int slot);
 int ofi_av_bind(struct fid *av_fid, struct fid *eq_fid, uint64_t flags);
 void ofi_av_write_event(struct util_av *av, uint64_t data,
@@ -650,5 +660,47 @@ const char *ofi_core_name(const char *prov_name, size_t *len);
 int ofi_shm_map(struct util_shm *shm, const char *name, size_t size,
 		int readonly, void **mapped);
 int ofi_shm_unmap(struct util_shm *shm);
+
+/*
+ * Name Server TODO: add support for Windows OS
+ * (osd/windows/pthread.h should be extended)
+ */
+
+typedef int(*ofi_ns_service_cmp_func_t)(void *svc1, void *svc2);
+typedef int(*ofi_ns_is_service_wildcard_func_t)(void *svc);
+
+struct util_ns {
+	RbtHandle	ns_map;
+	char		*ns_hostname;
+	int		ns_port;
+	pthread_t	ns_thread;
+
+	size_t	name_len;
+	size_t	service_len;
+
+	ofi_ns_service_cmp_func_t	service_cmp;
+
+	ofi_ns_is_service_wildcard_func_t is_service_wildcard;
+};
+
+struct util_ns_attr {
+	char	*ns_hostname;
+	int	ns_port;
+
+	size_t	name_len;
+	size_t	service_len;
+
+	ofi_ns_service_cmp_func_t	service_cmp;
+
+	ofi_ns_is_service_wildcard_func_t is_service_wildcard;
+};
+
+int ofi_ns_init(struct util_ns_attr *attr, struct util_ns *ns);
+void ofi_ns_start_server(struct util_ns *ns);
+void ofi_ns_stop_server(struct util_ns *ns);
+int ofi_ns_add_local_name(struct util_ns *ns, void *service, void *name);
+int ofi_ns_del_local_name(struct util_ns *ns, void *service, void *name);
+void *ofi_ns_resolve_name(struct util_ns *ns, const char *server,
+			  void *service);
 
 #endif

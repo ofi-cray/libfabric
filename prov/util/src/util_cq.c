@@ -38,6 +38,27 @@
 
 #define UTIL_DEF_CQ_SIZE (1024)
 
+int ofi_cq_write_error(struct util_cq *cq,
+		       const struct fi_cq_err_entry *err_entry)
+{
+	struct util_cq_err_entry *entry;
+	struct fi_cq_tagged_entry *comp;
+
+	if (!(entry = calloc(1, sizeof(*entry))))
+		return -FI_ENOMEM;
+
+	entry->err_entry = *err_entry;
+	fastlock_acquire(&cq->cq_lock);
+	slist_insert_tail(&entry->list_entry, &cq->err_list);
+	comp = ofi_cirque_tail(cq->cirq);
+	comp->flags = UTIL_FLAG_ERROR;
+	ofi_cirque_commit(cq->cirq);
+	fastlock_release(&cq->cq_lock);
+	if (cq->wait)
+		cq->wait->signal(cq->wait);
+	return 0;
+}
+
 int ofi_check_cq_attr(const struct fi_provider *prov,
 		      const struct fi_cq_attr *attr)
 {
@@ -384,6 +405,27 @@ static int fi_cq_init(struct fid_domain *domain, struct fi_cq_attr *attr,
 
 	ofi_atomic_inc32(&cq->domain->ref);
 	return 0;
+}
+
+int ofi_check_bind_cq_flags(struct util_ep *ep, struct util_cq *cq,
+			    uint64_t flags)
+{
+	const struct fi_provider *prov = ep->domain->fabric->prov;
+
+	if (flags & ~(FI_TRANSMIT | FI_RECV | FI_SELECTIVE_COMPLETION)) {
+		FI_WARN(prov, FI_LOG_EP_CTRL,
+			"Unsupported flags\n");
+		return -FI_EBADFLAGS;
+	}
+
+	if (((flags & FI_TRANSMIT) && ep->tx_cq) ||
+	    ((flags & FI_RECV) && ep->rx_cq)) {
+		FI_WARN(prov, FI_LOG_EP_CTRL,
+			"Duplicate CQ binding\n");
+		return -FI_EINVAL;
+	}
+
+	return FI_SUCCESS;
 }
 
 void ofi_cq_progress(struct util_cq *cq)

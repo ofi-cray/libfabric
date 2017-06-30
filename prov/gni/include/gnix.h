@@ -750,9 +750,9 @@ struct gnix_fab_req_msg {
 	size_t                       send_iov_cnt;
 	uint64_t                     send_flags;
 	size_t			     cum_send_len;
-	struct gnix_fab_req 	 *parent;
-	size_t                   mr_space_left;
-	uint64_t                 mr_buf_addr;
+	struct gnix_fab_req 	     *parent;
+	size_t                       mrecv_space_left;
+	uint64_t                     mrecv_buf_addr;
 
 	struct recv_info_t {
 		uint64_t	 recv_addr;

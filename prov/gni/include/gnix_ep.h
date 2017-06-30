@@ -236,11 +236,11 @@ _gnix_fr_alloc(struct gnix_fid_ep *ep)
 		fr->gnix_ep = ep;
 		dlist_init(&fr->dlist);
 		dlist_init(&fr->msg.tle.free);
-	}
 
-	/* reset common fields */
-	fr->tx_failures = 0;
-	_gnix_ref_get(ep);
+		/* reset common fields */
+		fr->tx_failures = 0;
+		_gnix_ref_get(ep);
+	}
 
 	return fr;
 }
@@ -262,11 +262,11 @@ _gnix_fr_alloc_w_cb(struct gnix_fid_ep *ep, void (*cb)(void *))
 		_gnix_ref_init(&fr->ref_cnt, 1, cb);
 		dlist_init(&fr->dlist);
 		dlist_init(&fr->msg.tle.free);
-	}
 
-	/* reset common fields */
-	fr->tx_failures = 0;
-	_gnix_ref_get(ep);
+		/* reset common fields */
+		fr->tx_failures = 0;
+		_gnix_ref_get(ep);
+	}
 
 	return fr;
 }

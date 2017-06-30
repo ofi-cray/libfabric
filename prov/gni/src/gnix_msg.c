@@ -1912,19 +1912,19 @@ static int __smsg_eager_msg_w_data(void *data, void *msg)
 			req->msg.recv_flags = mrecv_req->msg.recv_flags;
 			req->msg.recv_flags |= FI_MULTI_RECV;
 			req->msg.recv_info[0].recv_addr =
-				mrecv_req->msg.mr_buf_addr;
+				mrecv_req->msg.mrecv_buf_addr;
 			req->msg.recv_info[0].recv_len =
-				mrecv_req->msg.mr_space_left;
-			req->msg.cum_recv_len = mrecv_req->msg.mr_space_left;
+				mrecv_req->msg.mrecv_space_left;
+			req->msg.cum_recv_len = mrecv_req->msg.mrecv_space_left;
 			req->user_context = mrecv_req->user_context;
 
 			req->msg.parent = mrecv_req;
 			_gnix_ref_get(mrecv_req);
 
-			mrecv_req->msg.mr_space_left -= hdr->len;
-			mrecv_req->msg.mr_buf_addr += hdr->len;
+			mrecv_req->msg.mrecv_space_left -= hdr->len;
+			mrecv_req->msg.mrecv_buf_addr += hdr->len;
 
-			if ((int64_t)mrecv_req->msg.mr_space_left  <
+			if ((int64_t)mrecv_req->msg.mrecv_space_left  <
 				ep->min_multi_recv) {
 				_gnix_remove_tag(posted_queue, mrecv_req);
 				_gnix_ref_put(mrecv_req);
@@ -2109,20 +2109,20 @@ static int __smsg_rndzv_start(void *data, void *msg)
 			req->msg.recv_flags = mrecv_req->msg.recv_flags;
 			req->msg.recv_flags |= FI_MULTI_RECV;
 			req->msg.recv_info[0].recv_addr =
-				mrecv_req->msg.mr_buf_addr;
+				mrecv_req->msg.mrecv_buf_addr;
 			req->msg.recv_info[0].recv_len =
-				mrecv_req->msg.mr_space_left;
+				mrecv_req->msg.mrecv_space_left;
 			req->user_context = mrecv_req->user_context;
-			req->msg.cum_recv_len = mrecv_req->msg.mr_space_left;
+			req->msg.cum_recv_len = mrecv_req->msg.mrecv_space_left;
 
 			req->msg.parent = mrecv_req;
 			if (req->msg.parent)
 				_gnix_ref_get(req->msg.parent);
 
-			mrecv_req->msg.mr_space_left -= hdr->len;
-			mrecv_req->msg.mr_buf_addr += hdr->len;
+			mrecv_req->msg.mrecv_space_left -= hdr->len;
+			mrecv_req->msg.mrecv_buf_addr += hdr->len;
 
-			if ((int64_t)mrecv_req->msg.mr_space_left  <
+			if ((int64_t)mrecv_req->msg.mrecv_space_left  <
 				ep->min_multi_recv) {
 				_gnix_remove_tag(posted_queue, mrecv_req);
 				_gnix_ref_put(mrecv_req);
@@ -2611,9 +2611,9 @@ ssize_t _gnix_recv(struct gnix_fid_ep *ep, uint64_t buf, size_t len,
 		 */
 		if (unlikely(mrecv_req != NULL)) {
 
-			mrecv_req->msg.mr_space_left -=
+			mrecv_req->msg.mrecv_space_left -=
 				req->msg.cum_send_len;
-			mrecv_req->msg.mr_buf_addr +=
+			mrecv_req->msg.mrecv_buf_addr +=
 				req->msg.cum_send_len;
 			req->msg.parent = mrecv_req;
 			_gnix_ref_get(mrecv_req);
@@ -2815,8 +2815,8 @@ ssize_t _gnix_recv_mr(struct gnix_fid_ep *ep, uint64_t buf, size_t len,
 	mrecv_req->gnix_ep = ep;
 	mrecv_req->user_context = context;
 
-	mrecv_req->msg.mr_buf_addr = (uint64_t)buf;
-	mrecv_req->msg.mr_space_left = len;
+	mrecv_req->msg.mrecv_buf_addr = (uint64_t)buf;
+	mrecv_req->msg.mrecv_space_left = len;
 
 	if (mdesc) {
 		md = container_of(mdesc,
@@ -2845,12 +2845,12 @@ ssize_t _gnix_recv_mr(struct gnix_fid_ep *ep, uint64_t buf, size_t len,
 		mrecv_req->msg.recv_flags |= FI_COMPLETION;
 	}
 
-	last_space_left = mrecv_req->msg.mr_space_left;
+	last_space_left = mrecv_req->msg.mrecv_space_left;
 
 	do {
 		ret = _gnix_recv(ep,
-				 mrecv_req->msg.mr_buf_addr,
-				 mrecv_req->msg.mr_space_left,
+				 mrecv_req->msg.mrecv_buf_addr,
+				 mrecv_req->msg.mrecv_space_left,
 				 mdesc,
 				 src_addr,
 				 context,
@@ -2862,17 +2862,17 @@ ssize_t _gnix_recv_mr(struct gnix_fid_ep *ep, uint64_t buf, size_t len,
 			_gnix_fr_free(ep, mrecv_req);
 			return ret;
 		}
-		if ((last_space_left == mrecv_req->msg.mr_space_left) ||
-			(mrecv_req->msg.mr_space_left < ep->min_multi_recv))
+		if ((last_space_left == mrecv_req->msg.mrecv_space_left) ||
+			(mrecv_req->msg.mrecv_space_left < ep->min_multi_recv))
 			break;
-		last_space_left = mrecv_req->msg.mr_space_left;
+		last_space_left = mrecv_req->msg.mrecv_space_left;
 	} while (1);
 
 	/*
 	 * if space left in multi receive request
 	 * add to posted receive queue, else free request.
 	 */
-	if ((int64_t)mrecv_req->msg.mr_space_left > ep->min_multi_recv) {
+	if ((int64_t)mrecv_req->msg.mrecv_space_left > ep->min_multi_recv) {
 		__gnix_msg_queues(ep, tagged, &posted_queue, &unexp_queue);
 		_gnix_insert_tag(posted_queue, tag, mrecv_req, ignore);
 	} else {

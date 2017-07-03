@@ -440,7 +440,7 @@ static int __recv_completion_src(
 }
 
 /*
- * GNI provider generates a special CQE to indicate
+ * GNI provider generates a separate CQE to indicate
  * its releasing a FI_MULTI_RECV receive buffer back to
  * the application.
  */

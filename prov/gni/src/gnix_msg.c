@@ -1867,6 +1867,56 @@ smsg_completer_fn_t gnix_ep_smsg_completers[] = {
  * Handle SMSG message with tag GNIX_SMSG_T_EGR_W_DATA
  */
 
+static inline struct gnix_fab_req *
+		__handle_mrecv_req(struct gnix_fab_req *mrecv_req,
+				   struct gnix_fid_ep *ep,
+				   uint64_t len,
+				   struct gnix_tag_storage *queue)
+{
+	struct gnix_fab_req *req = NULL;
+
+	req = _gnix_fr_alloc(ep);
+	if (req == NULL) {
+		return NULL;
+	}
+
+	/*
+	 * set recv related fields in request,
+	 * and adjust mrecv buffer pointer and
+	 * space remaining
+	 */
+
+	req->type = GNIX_FAB_RQ_RECV;
+	req->msg.recv_flags = mrecv_req->msg.recv_flags;
+	req->msg.recv_flags |= FI_MULTI_RECV;
+	req->msg.recv_info[0].recv_addr =
+			mrecv_req->msg.mrecv_buf_addr;
+	req->msg.recv_info[0].recv_len =
+			mrecv_req->msg.mrecv_space_left;
+	req->user_context = mrecv_req->user_context;
+	req->msg.cum_recv_len = mrecv_req->msg.mrecv_space_left;
+
+	req->msg.parent = mrecv_req;
+	if (req->msg.parent)
+		_gnix_ref_get(req->msg.parent);
+
+	mrecv_req->msg.mrecv_space_left -= len;
+	mrecv_req->msg.mrecv_buf_addr += len;
+
+	if ((int64_t)mrecv_req->msg.mrecv_space_left  <
+			ep->min_multi_recv) {
+		_gnix_remove_tag(queue, mrecv_req);
+		_gnix_ref_put(mrecv_req);
+		_gnix_fr_free(ep, mrecv_req);
+		mrecv_req = NULL;
+	} else {
+		GNIX_DEBUG(FI_LOG_EP_DATA,
+			"Re-using multi-recv req: %p\n", mrecv_req);
+	}
+
+	return req;
+}
+
 static int __smsg_eager_msg_w_data(void *data, void *msg)
 {
 	int ret = FI_SUCCESS;
@@ -1874,11 +1924,12 @@ static int __smsg_eager_msg_w_data(void *data, void *msg)
 	struct gnix_vc *vc = (struct gnix_vc *)data;
 	struct gnix_smsg_eager_hdr *hdr = (struct gnix_smsg_eager_hdr *)msg;
 	struct gnix_fid_ep *ep;
-	struct gnix_fab_req *req = NULL, *mrecv_req = NULL;
+	struct gnix_fab_req *req = NULL;
 	void *data_ptr;
 	struct gnix_tag_storage *unexp_queue;
 	struct gnix_tag_storage *posted_queue;
 	int tagged;
+	bool multi_recv = false;
 
 	GNIX_TRACE(FI_LOG_EP_DATA, "\n");
 
@@ -1895,45 +1946,11 @@ static int __smsg_eager_msg_w_data(void *data, void *msg)
 			      &vc->peer_addr);
 	if (req) {
 		if (req->type == GNIX_FAB_RQ_MRECV) {
-
-			mrecv_req = req;
-			req = _gnix_fr_alloc(ep);
+			req = __handle_mrecv_req(req, ep, hdr->len, posted_queue);
 			if (req == NULL) {
 				return -FI_ENOMEM;
 			}
-
-			/*
-			 * set recv related fields in request,
-			 * and adjust mrecv buffer pointer and
-			 * space remaining
-			 */
-
-			req->type = GNIX_FAB_RQ_RECV;
-			req->msg.recv_flags = mrecv_req->msg.recv_flags;
-			req->msg.recv_flags |= FI_MULTI_RECV;
-			req->msg.recv_info[0].recv_addr =
-				mrecv_req->msg.mrecv_buf_addr;
-			req->msg.recv_info[0].recv_len =
-				mrecv_req->msg.mrecv_space_left;
-			req->msg.cum_recv_len = mrecv_req->msg.mrecv_space_left;
-			req->user_context = mrecv_req->user_context;
-
-			req->msg.parent = mrecv_req;
-			_gnix_ref_get(mrecv_req);
-
-			mrecv_req->msg.mrecv_space_left -= hdr->len;
-			mrecv_req->msg.mrecv_buf_addr += hdr->len;
-
-			if ((int64_t)mrecv_req->msg.mrecv_space_left  <
-				ep->min_multi_recv) {
-				_gnix_remove_tag(posted_queue, mrecv_req);
-				_gnix_ref_put(mrecv_req);
-				_gnix_fr_free(ep, mrecv_req);
-				mrecv_req = NULL;
-			}
-
-			GNIX_DEBUG(FI_LOG_EP_DATA,
-				"Re-using multi-recv req: %p\n", mrecv_req);
+			multi_recv = true;
 		}
 
 		req->addr = vc->peer_addr;
@@ -1960,7 +1977,7 @@ static int __smsg_eager_msg_w_data(void *data, void *msg)
 		 * Dequeue and free the request if not
 		 * matching a FI_MULTI_RECV buffer.
 		 */
-		if (mrecv_req == NULL) {
+		if (multi_recv == false) {
 			_gnix_remove_tag(posted_queue, req);
 			_gnix_fr_free(ep, req);
 		}
@@ -2074,10 +2091,11 @@ static int __smsg_rndzv_start(void *data, void *msg)
 	struct gnix_smsg_rndzv_start_hdr *hdr =
 			(struct gnix_smsg_rndzv_start_hdr *)msg;
 	struct gnix_fid_ep *ep;
-	struct gnix_fab_req *req = NULL, *mrecv_req = NULL;
+	struct gnix_fab_req *req = NULL;
 	struct gnix_tag_storage *unexp_queue;
 	struct gnix_tag_storage *posted_queue;
 	int tagged;
+	bool multi_recv = false;
 
 	GNIX_TRACE(FI_LOG_EP_DATA, "\n");
 
@@ -2092,46 +2110,12 @@ static int __smsg_rndzv_start(void *data, void *msg)
 
 	if (req) {
 		if (req->type == GNIX_FAB_RQ_MRECV) {
-
-			mrecv_req = req;
-			req = _gnix_fr_alloc(ep);
+			req = __handle_mrecv_req(req, ep, hdr->len,
+						 posted_queue);
 			if (req == NULL) {
 				return -FI_ENOMEM;
 			}
-
-			/*
-			 * set recv related fields in request,
-			 * and adjust mrecv buffer pointer and
-			 * space remaining
-			 */
-
-			req->type = GNIX_FAB_RQ_RECV;
-			req->msg.recv_flags = mrecv_req->msg.recv_flags;
-			req->msg.recv_flags |= FI_MULTI_RECV;
-			req->msg.recv_info[0].recv_addr =
-				mrecv_req->msg.mrecv_buf_addr;
-			req->msg.recv_info[0].recv_len =
-				mrecv_req->msg.mrecv_space_left;
-			req->user_context = mrecv_req->user_context;
-			req->msg.cum_recv_len = mrecv_req->msg.mrecv_space_left;
-
-			req->msg.parent = mrecv_req;
-			if (req->msg.parent)
-				_gnix_ref_get(req->msg.parent);
-
-			mrecv_req->msg.mrecv_space_left -= hdr->len;
-			mrecv_req->msg.mrecv_buf_addr += hdr->len;
-
-			if ((int64_t)mrecv_req->msg.mrecv_space_left  <
-				ep->min_multi_recv) {
-				_gnix_remove_tag(posted_queue, mrecv_req);
-				_gnix_ref_put(mrecv_req);
-				_gnix_fr_free(ep, mrecv_req);
-				mrecv_req = NULL;
-			}
-
-			GNIX_DEBUG(FI_LOG_EP_DATA,
-				"Re-using multi-recv req: %p\n", mrecv_req);
+			multi_recv = true;
 		}
 
 		req->addr = vc->peer_addr;
@@ -2179,7 +2163,7 @@ static int __smsg_rndzv_start(void *data, void *msg)
 			  req, req->msg.recv_info[0].recv_addr,
 			  req->msg.send_info[0].send_len);
 
-		if (mrecv_req == NULL)
+		if (multi_recv == false)
 			_gnix_remove_tag(posted_queue, req);
 
 		/* Queue request to initiate pull of source data. */

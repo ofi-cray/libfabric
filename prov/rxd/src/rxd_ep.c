@@ -36,6 +36,8 @@
 #include <fi_iov.h>
 #include "rxd.h"
 
+int rxd_progress_spin_count = 1000;
+
 static ssize_t rxd_ep_cancel(fid_t fid, void *context)
 {
 	struct rxd_ep *ep;
@@ -572,14 +574,15 @@ int rxd_ep_reply_ack(struct rxd_ep *ep, struct ofi_ctrl_hdr *in_ctrl,
 	if (!pkt_meta)
 		return -FI_ENOMEM;
 
-	rx_entry = &ep->rx_entry_fs->buf[rx_key];
+	rx_entry = (rx_key != UINT64_MAX) ? &ep->rx_entry_fs->buf[rx_key] : NULL;
 
 	pkt = (struct rxd_pkt_data *)pkt_meta->pkt_data;
-	rxd_init_ctrl_hdr(&pkt->ctrl, type, seg_size, rx_entry->exp_seg_no,
-			   in_ctrl->msg_id, rx_key, source);
+	rxd_init_ctrl_hdr(&pkt->ctrl, type, seg_size,
+			  rx_entry ? rx_entry->exp_seg_no : 0,
+			  in_ctrl->msg_id, rx_key, source);
 
-	FI_DBG(&rxd_prov, FI_LOG_EP_CTRL, "sending ack [%p] - %d, %d\n",
-		in_ctrl->msg_id, in_ctrl->seg_no, seg_size);
+	FI_DBG(&rxd_prov, FI_LOG_EP_CTRL, "sending ack [%p] - segno: %d, window: %d\n",
+		pkt->ctrl.msg_id, pkt->ctrl.seg_no, pkt->ctrl.seg_size);
 
 	pkt_meta->flags = RXD_NOT_ACKED;
 	ret = fi_send(ep->dg_ep, pkt, sizeof(struct rxd_pkt_data),
@@ -1473,11 +1476,14 @@ static void rxd_ep_progress(struct util_ep *util_ep)
 	struct rxd_ep *ep;
 	uint64_t cur_time;
 	ssize_t ret;
+	int i;
 
 	ep = container_of(util_ep, struct rxd_ep, util_ep);
 
 	fastlock_acquire(&ep->lock);
-	do {
+	for(ret = 1, i = 0;
+	    ret > 0 && (!rxd_progress_spin_count || i < rxd_progress_spin_count);
+	    i++) {
 		ret = fi_cq_read(ep->dg_cq, &cq_entry, 1);
 		if (ret == -FI_EAGAIN)
 			break;
@@ -1488,7 +1494,7 @@ static void rxd_ep_progress(struct util_ep *util_ep)
 			rxd_handle_recv_comp(ep, &cq_entry);
 		else
 			assert (0);
-	} while (ret > 0);
+	}
 
 	cur_time = fi_gettime_us();
 	dlist_foreach(&ep->tx_entry_list, tx_item) {

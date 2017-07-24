@@ -509,6 +509,8 @@ int _gnix_ep_init_vc(struct gnix_fid_ep *ep_priv)
 	gnix_hashtable_attr_t gnix_ht_attr;
 	gnix_vec_attr_t gnix_vec_attr;
 
+	assert(ep_priv->av);
+
 	if (ep_priv->av->type == FI_AV_TABLE) {
 		/* Use array to store EP VCs when using FI_AV_TABLE. */
 		ep_priv->vc_table = calloc(1, sizeof(struct gnix_vector));

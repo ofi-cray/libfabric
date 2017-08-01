@@ -125,7 +125,6 @@ struct fi_filter {
 extern struct fi_filter prov_log_filter;
 extern struct fi_provider core_prov;
 
-int ofi_is_util_prov(struct fi_provider *provider);
 void ofi_create_filter(struct fi_filter *filter, const char *env_name);
 void ofi_free_filter(struct fi_filter *filter);
 int ofi_apply_filter(struct fi_filter *filter, const char *name);
@@ -172,7 +171,8 @@ int ofi_send_allowed(uint64_t caps);
 int ofi_recv_allowed(uint64_t caps);
 int ofi_rma_initiate_allowed(uint64_t caps);
 int ofi_rma_target_allowed(uint64_t caps);
-int ofi_ep_bind_valid(struct fi_provider *prov, struct fid *bfid, uint64_t flags);
+int ofi_ep_bind_valid(const struct fi_provider *prov, struct fid *bfid,
+		      uint64_t flags);
 
 uint64_t fi_gettime_ms(void);
 uint64_t fi_gettime_us(void);

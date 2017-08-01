@@ -209,10 +209,19 @@ struct util_ep {
 	struct util_av		*av;
 	struct dlist_entry	av_entry;
 	struct util_eq		*eq;
+	/* CQ entries */
 	struct util_cq		*rx_cq;
 	uint64_t		rx_op_flags;
 	struct util_cq		*tx_cq;
 	uint64_t		tx_op_flags;
+
+	/* CNTR entries */
+	struct util_cntr	*tx_cntr;     /* transmit/send */
+	struct util_cntr	*rx_cntr;     /* receive       */
+	struct util_cntr	*rd_cntr;     /* read          */
+	struct util_cntr	*wr_cntr;     /* write         */
+	struct util_cntr	*rem_rd_cntr; /* remote read   */
+	struct util_cntr	*rem_wr_cntr; /* remote write  */
 
 	uint64_t		caps;
 	uint64_t		flags;
@@ -224,6 +233,8 @@ struct util_ep {
 int ofi_ep_bind_av(struct util_ep *util_ep, struct util_av *av);
 int ofi_ep_bind_eq(struct util_ep *ep, struct util_eq *eq);
 int ofi_ep_bind_cq(struct util_ep *ep, struct util_cq *cq, uint64_t flags);
+int ofi_ep_bind_cntr(struct util_ep *ep, struct util_cntr *cntr, uint64_t flags);
+int ofi_ep_bind(struct util_ep *util_ep, struct fid *fid, uint64_t flags);
 int ofi_endpoint_init(struct fid_domain *domain, const struct util_prov *util_prov,
 		      struct fi_info *info, struct util_ep *ep, void *context,
 		      ofi_ep_progress_func progress);
@@ -293,15 +304,35 @@ int ofi_cq_write_error(struct util_cq *cq,
 /*
  * Counter
  */
+struct util_cntr;
+typedef void (*ofi_cntr_progress_func)(struct util_cntr *cntr);
+
 struct util_cntr {
 	struct fid_cntr		cntr_fid;
 	struct util_domain	*domain;
+	struct util_wait	*wait;
 	ofi_atomic32_t		ref;
+
+	ofi_atomic64_t		cnt;
+	ofi_atomic64_t		err;
+
 	uint64_t		checkpoint_cnt;
 	uint64_t		checkpoint_err;
+
+	struct dlist_entry	ep_list;
+	fastlock_t		ep_list_lock;
+
+	ofi_cntr_progress_func	progress;
 };
 
+int ofi_check_bind_cntr_flags(struct util_ep *ep, struct util_cntr *cntr,
+			      uint64_t flags);
 
+void ofi_cntr_progress(struct util_cntr *cntr);
+int ofi_cntr_init(const struct fi_provider *prov, struct fid_domain *domain,
+		  struct fi_cntr_attr *attr, struct util_cntr *cntr,
+		  ofi_cntr_progress_func progress, void *context);
+int ofi_cntr_cleanup(struct util_cntr *cntr);
 /*
  * AV / addressing
  */
@@ -377,6 +408,11 @@ int ofi_av_get_index(struct util_av *av, const void *addr);
 // for both AV and RX only connections.
 #define UTIL_CMAP_IDX_BITS 48
 
+enum ofi_cmap_signal {
+	OFI_CMAP_FREE,
+	OFI_CMAP_EXIT,
+};
+
 enum util_cmap_state {
 	CMAP_IDLE,
 	CMAP_CONNREQ_SENT,
@@ -411,7 +447,8 @@ typedef int (*ofi_cmap_connect_func)(struct util_ep *cmap,
 				     struct util_cmap_handle *handle,
 				     fi_addr_t fi_addr);
 typedef void *(*ofi_cmap_event_handler_func)(void *arg);
-typedef int (*ofi_cmap_signal_func)(struct util_ep *ep);
+typedef int (*ofi_cmap_signal_func)(struct util_ep *ep, void *context,
+				    enum ofi_cmap_signal signal);
 
 struct util_cmap_attr {
 	void 				*name;
@@ -446,12 +483,15 @@ struct util_cmap_handle *ofi_cmap_key2handle(struct util_cmap *cmap, uint64_t ke
 int ofi_cmap_get_handle(struct util_cmap *cmap, fi_addr_t fi_addr,
 			struct util_cmap_handle **handle);
 
-void ofi_cmap_process_connect(struct util_cmap *cmap, uint64_t local_key,
+void ofi_cmap_process_connect(struct util_cmap *cmap,
+			      struct util_cmap_handle *handle,
 			      uint64_t *remote_key);
-void ofi_cmap_process_reject(struct util_cmap *cmap, uint64_t local_key);
+void ofi_cmap_process_reject(struct util_cmap *cmap,
+			     struct util_cmap_handle *handle);
 int ofi_cmap_process_connreq(struct util_cmap *cmap, void *addr,
 			     struct util_cmap_handle **handle);
-void ofi_cmap_process_shutdown(struct util_cmap *cmap, uint64_t local_key);
+void ofi_cmap_process_shutdown(struct util_cmap *cmap,
+			       struct util_cmap_handle *handle);
 void ofi_cmap_del_handle(struct util_cmap_handle *handle);
 void ofi_cmap_free(struct util_cmap *cmap);
 struct util_cmap *ofi_cmap_alloc(struct util_ep *ep,

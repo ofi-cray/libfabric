@@ -70,6 +70,39 @@ static const char *rxm_cq_strerror(struct fid_cq *cq_fid, int prov_errno,
 	return fi_cq_strerror(rxm_ep->msg_cq, prov_errno, err_data, buf, len);
 }
 
+#if ENABLE_DEBUG
+static void rxm_cq_log_comp(uint64_t flags)
+{
+	flags &= (FI_SEND | FI_WRITE | FI_READ | FI_REMOTE_READ |
+		  FI_REMOTE_WRITE);
+
+	switch(flags) {
+	case FI_SEND:
+		FI_DBG(&rxm_prov, FI_LOG_CQ, "Reporting send completion\n");
+		break;
+	case FI_WRITE:
+		FI_DBG(&rxm_prov, FI_LOG_CQ, "Reporting write completion\n");
+		break;
+	case FI_READ:
+		FI_DBG(&rxm_prov, FI_LOG_CQ, "Reporting read completion\n");
+		break;
+	case FI_REMOTE_READ:
+		FI_DBG(&rxm_prov, FI_LOG_CQ, "Reporting remote read completion\n");
+		break;
+	case FI_REMOTE_WRITE:
+		FI_DBG(&rxm_prov, FI_LOG_CQ, "Reporting remote write completion\n");
+		break;
+	default:
+		FI_WARN(&rxm_prov, FI_LOG_CQ, "Unknown completion\n");
+	}
+}
+#else
+static void rxm_cq_log_comp(uint64_t flags)
+{
+	// NOP
+}
+#endif
+
 int rxm_cq_comp(struct util_cq *util_cq, void *context, uint64_t flags, size_t len,
 		void *buf, uint64_t data, uint64_t tag)
 {
@@ -130,6 +163,7 @@ static int rxm_finish_send_nobuf(struct rxm_tx_entry *tx_entry)
 					"Unable to report completion\n");
 			return ret;
 		}
+		rxm_cq_log_comp(tx_entry->comp_flags);
 	}
 	rxm_tx_entry_release(&tx_entry->ep->send_queue, tx_entry);
 	return 0;
@@ -217,10 +251,28 @@ static int rxm_lmt_rma_read(struct rxm_rx_buf *rx_buf)
 	return 0;
 }
 
+static int rxm_lmt_tx_finish(struct rxm_tx_entry *tx_entry)
+{
+	int ret;
+
+	RXM_LOG_STATE_TX(FI_LOG_CQ, tx_entry, RXM_LMT_FINISH);
+	tx_entry->state = RXM_LMT_FINISH;
+
+	if (!RXM_MR_LOCAL(tx_entry->ep->rxm_info))
+		rxm_ep_msg_mr_closev(tx_entry->mr, tx_entry->count);
+
+	tx_entry->comp_flags |= FI_SEND;
+	ret = rxm_finish_send(tx_entry);
+	if (ret)
+		return ret;
+
+	return rxm_ep_repost_buf(tx_entry->rx_buf);
+}
+
 static int rxm_lmt_handle_ack(struct rxm_rx_buf *rx_buf)
 {
 	struct rxm_tx_entry *tx_entry;
-	int ret, index;
+	int index;
 
 	FI_DBG(&rxm_prov, FI_LOG_CQ, "Got ACK for msg_id: 0x%" PRIx64 "\n",
 			rx_buf->pkt.ctrl_hdr.msg_id);
@@ -233,21 +285,16 @@ static int rxm_lmt_handle_ack(struct rxm_rx_buf *rx_buf)
 
 	assert(tx_entry->tx_buf->pkt.ctrl_hdr.msg_id == rx_buf->pkt.ctrl_hdr.msg_id);
 
-	/* If we used fi_inject the state would be RXM_LMT_TX */
-	assert(tx_entry->state == RXM_LMT_ACK_WAIT || tx_entry->state == RXM_LMT_TX);
+	tx_entry->rx_buf = rx_buf;
 
-	RXM_LOG_STATE_TX(FI_LOG_CQ, tx_entry, RXM_LMT_FINISH);
-	tx_entry->state = RXM_LMT_FINISH;
-
-	if (!RXM_MR_LOCAL(rx_buf->ep->rxm_info))
-		rxm_ep_msg_mr_closev(tx_entry->mr, tx_entry->count);
-
-	tx_entry->comp_flags |= FI_SEND;
-	ret = rxm_finish_send(tx_entry);
-	if (ret)
-		return ret;
-
-	return rxm_ep_repost_buf(rx_buf);
+	if (tx_entry->state == RXM_LMT_ACK_WAIT) {
+		return rxm_lmt_tx_finish(tx_entry);
+	} else {
+		assert(tx_entry->state == RXM_LMT_TX);
+		RXM_LOG_STATE_TX(FI_LOG_CQ, tx_entry, RXM_LMT_ACK_RECVD);
+		tx_entry->state = RXM_LMT_ACK_RECVD;
+		return 0;
+	}
 }
 
 int rxm_cq_handle_data(struct rxm_rx_buf *rx_buf)
@@ -384,37 +431,50 @@ int rxm_handle_recv_comp(struct rxm_rx_buf *rx_buf)
 
 static int rxm_lmt_send_ack(struct rxm_rx_buf *rx_buf)
 {
-	struct iovec iov;
-	struct fi_msg msg;
-	struct rxm_pkt pkt;
+	struct rxm_tx_entry *tx_entry;
+	struct rxm_tx_buf *tx_buf;
 	int ret;
 
 	assert(rx_buf->conn);
 
-	rxm_pkt_init(&pkt);
-	pkt.ctrl_hdr.type = ofi_ctrl_ack;
-	pkt.ctrl_hdr.conn_id = rx_buf->conn->handle.remote_key;
-	pkt.ctrl_hdr.msg_id = rx_buf->pkt.ctrl_hdr.msg_id;
-	pkt.hdr.op = rx_buf->pkt.hdr.op;
+	tx_buf = (struct rxm_tx_buf *)rxm_buf_get(&rx_buf->ep->tx_pool);
+	if (!tx_buf) {
+		FI_WARN(&rxm_prov, FI_LOG_CQ, "TX queue full!\n");
+		return -FI_EAGAIN;
+	}
 
-	iov.iov_base = &pkt;
-	iov.iov_len = sizeof(pkt);
-
-	memset(&msg, 0, sizeof(msg));
-	msg.msg_iov = &iov;
-	msg.iov_count = 1;
-	msg.context = rx_buf;
+	if (!(tx_entry = rxm_tx_entry_get(&rx_buf->ep->send_queue))) {
+		ret = -FI_EAGAIN;
+		goto err1;
+	}
 
 	RXM_LOG_STATE(FI_LOG_CQ, rx_buf->pkt, RXM_LMT_READ, RXM_LMT_ACK_SENT);
 	rx_buf->hdr.state = RXM_LMT_ACK_SENT;
 
-	ret = fi_sendmsg(rx_buf->conn->msg_ep, &msg, FI_INJECT);
+	tx_entry->state 	= rx_buf->hdr.state;
+	tx_entry->ep 		= rx_buf->ep;
+	tx_entry->context 	= rx_buf;
+	tx_entry->tx_buf 	= tx_buf;
+
+	rxm_pkt_init(&tx_buf->pkt);
+	tx_buf->pkt.ctrl_hdr.type 	= ofi_ctrl_ack;
+	tx_buf->pkt.ctrl_hdr.conn_id 	= rx_buf->conn->handle.remote_key;
+	tx_buf->pkt.ctrl_hdr.msg_id 	= rx_buf->pkt.ctrl_hdr.msg_id;
+	tx_buf->pkt.hdr.op 		= rx_buf->pkt.hdr.op;
+
+	ret = fi_send(rx_buf->conn->msg_ep, &tx_buf->pkt, sizeof(tx_buf->pkt),
+		      tx_buf->hdr.desc, 0, tx_entry);
 	if (ret) {
 		FI_WARN(&rxm_prov, FI_LOG_CQ, "Unable to send ACK\n");
 		rx_buf->hdr.state = RXM_NONE;
-		return ret;
+		goto err2;
 	}
 	return 0;
+err2:
+	rxm_tx_entry_release(&rx_buf->ep->send_queue, tx_entry);
+err1:
+	rxm_buf_release(&rx_buf->ep->tx_pool, (struct rxm_buf *)tx_buf);
+	return ret;
 }
 
 static int rxm_handle_remote_write(struct rxm_ep *rxm_ep,
@@ -440,9 +500,7 @@ static int rxm_cq_handle_comp(struct rxm_ep *rxm_ep,
 {
 	enum rxm_proto_state *state = comp->op_context;
 	struct rxm_rx_buf *rx_buf = comp->op_context;
-#if ENABLE_DEBUG
 	struct rxm_tx_entry *tx_entry = comp->op_context;
-#endif
 
 	/* Remote write events may not consume a posted recv so op context
 	 * and hence state would be NULL */
@@ -451,9 +509,11 @@ static int rxm_cq_handle_comp(struct rxm_ep *rxm_ep,
 
 	switch (*state) {
 	case RXM_TX_NOBUF:
-		return rxm_finish_send_nobuf(comp->op_context);
+		assert(comp->flags & (FI_SEND | FI_WRITE | FI_READ));
+		return rxm_finish_send_nobuf(tx_entry);
 	case RXM_TX:
-		return rxm_finish_send(comp->op_context);
+		assert(comp->flags & (FI_SEND | FI_WRITE));
+		return rxm_finish_send(tx_entry);
 	case RXM_RX:
 		assert(!(comp->flags & FI_REMOTE_READ));
 
@@ -466,14 +526,23 @@ static int rxm_cq_handle_comp(struct rxm_ep *rxm_ep,
 		RXM_LOG_STATE_TX(FI_LOG_CQ, tx_entry, RXM_LMT_ACK_WAIT);
 		*state = RXM_LMT_ACK_WAIT;
 		return 0;
+	case RXM_LMT_ACK_RECVD:
+		assert(comp->flags & FI_SEND);
+		return rxm_lmt_tx_finish(tx_entry);
 	case RXM_LMT_READ:
+		assert(comp->flags & FI_READ);
 		if (rx_buf->index < rx_buf->rma_iov->count)
 			return rxm_lmt_rma_read(rx_buf);
 		else
 			return rxm_lmt_send_ack(rx_buf);
 	case RXM_LMT_ACK_SENT:
+		assert(comp->flags & FI_SEND);
+		rx_buf = tx_entry->context;
+		rxm_tx_entry_release(&tx_entry->ep->send_queue, tx_entry);
+		rxm_buf_release(&rx_buf->ep->tx_pool, (struct rxm_buf *)tx_entry->tx_buf);
+
 		RXM_LOG_STATE_RX(FI_LOG_CQ, rx_buf, RXM_LMT_FINISH);
-		*state = RXM_LMT_FINISH;
+		rx_buf->hdr.state = RXM_LMT_FINISH;
 		if (!RXM_MR_LOCAL(rx_buf->ep->rxm_info))
 			rxm_ep_msg_mr_closev(rx_buf->mr, RXM_IOV_LIMIT);
 		return rxm_finish_recv(rx_buf);
@@ -589,9 +658,9 @@ static struct fi_ops_cq rxm_cq_ops = {
 	.read = ofi_cq_read,
 	.readfrom = ofi_cq_readfrom,
 	.readerr = ofi_cq_readerr,
-	.sread = ofi_cq_sread,
-	.sreadfrom = ofi_cq_sreadfrom,
-	.signal = ofi_cq_signal,
+	.sread = fi_no_cq_sread,
+	.sreadfrom = fi_no_cq_sreadfrom,
+	.signal = fi_no_cq_signal,
 	.strerror = rxm_cq_strerror,
 };
 

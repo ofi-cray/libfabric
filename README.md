@@ -177,6 +177,13 @@ Intel TrueScale Fabric.
 
 See the `fi_psm2(7)` man page for more details.
 
+### rxm
+
+The `ofi_rxm` provider is an utility provider that supports RDM endpoints emulated
+over MSG endpoints of a core provider.
+
+See [`fi_rxm`(7)](fi_rxm.7.html) for more information.
+
 ### sockets
 
 ***
@@ -315,3 +322,25 @@ See the `fi_netdir(7)` man page for more details.
   If the libraries and header files are not in default paths (the default path is
   root of provier directory, i.e. \prov\netdir\NetDirect, where NetDirect contains
   the header files), specify them in the configuration properties of the VS project.
+
+### mlx
+
+***
+
+The MLX provider enables applications using OFI to be run over UCX
+communication library. It uses libucp for connections control and data transfer operations.
+Supported UCP API version: 1.0
+
+See the `fi_mlx(7)` man page for more details.
+
+#### Dependencies
+
+- The MLX provider requires UCP API 1.0 capable libucp and libucs (tested with hpcx v1.8.0).
+  If you are compiling Libfabric from source and want to enable MLX
+  support, you will also need the matching header files for UCX.
+  If the libraries and header files are not in default paths, specify them using:
+
+```
+--with-mlx=<path to local UCX installation>
+```
+

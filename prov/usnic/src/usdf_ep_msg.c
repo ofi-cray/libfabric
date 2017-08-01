@@ -118,7 +118,26 @@ static const struct fi_domain_attr msg_dflt_domain_attr = {
 	.data_progress = FI_PROGRESS_MANUAL,
 	.resource_mgmt = FI_RM_DISABLED,
 	.mr_mode = OFI_MR_BASIC_MAP | FI_MR_LOCAL,
-	.cntr_cnt = USDF_MSG_CNTR_CNT
+	.cntr_cnt = USDF_MSG_CNTR_CNT,
+	.mr_iov_limit = USDF_MSG_MR_IOV_LIMIT,
+	.mr_cnt = USDF_MSG_MR_CNT,
+};
+
+static struct fi_ops_atomic usdf_msg_atomic_ops = {
+	.size = sizeof(struct fi_ops_atomic),
+	.write = fi_no_atomic_write,
+	.writev = fi_no_atomic_writev,
+	.writemsg = fi_no_atomic_writemsg,
+	.inject = fi_no_atomic_inject,
+	.readwrite = fi_no_atomic_readwrite,
+	.readwritev = fi_no_atomic_readwritev,
+	.readwritemsg = fi_no_atomic_readwritemsg,
+	.compwrite = fi_no_atomic_compwrite,
+	.compwritev = fi_no_atomic_compwritev,
+	.compwritemsg = fi_no_atomic_compwritemsg,
+	.writevalid = fi_no_atomic_writevalid,
+	.readwritevalid = fi_no_atomic_readwritevalid,
+	.compwritevalid = fi_no_atomic_compwritevalid,
 };
 
 /*******************************************************************************
@@ -177,8 +196,23 @@ int usdf_msg_fill_dom_attr(uint32_t version, struct fi_info *hints,
 	if (ret < 0)
 		return -FI_ENODATA;
 
-	if (!hints || !hints->domain_attr)
+	if (!hints || !hints->domain_attr) {
+		/* In version < 1.5, if no domain_attr provided,
+		 * we have to provide backward compatibility in case of
+		 * application compiled with version >= 1.5 but still
+		 * request < 1.5 such as Open MPI
+		 */
+		if (FI_VERSION_LT(version, FI_VERSION(1, 5))) {
+			/* The default for mr_mode should be FI_MR_BASIC. */
+			defaults.mr_mode = FI_MR_BASIC;
+
+			/* FI_REMOTE_COMM is introduced in 1.5, we have to
+			 * remove that from the default for older version.
+			 */
+			defaults.caps &= ~FI_REMOTE_COMM;
+		}
 		goto out;
+	}
 
 	/* how to handle fi_thread_fid, fi_thread_completion, etc?
 	 */
@@ -218,6 +252,9 @@ int usdf_msg_fill_dom_attr(uint32_t version, struct fi_info *hints,
 
 	switch (hints->domain_attr->caps) {
 	case FI_REMOTE_COMM:
+		/* FI_REMOTE_COMM is introduced in 1.5, if the user give us
+		 * the flag, this must be a mistake. Fail.
+		 */
 		if (FI_VERSION_LT(version, FI_VERSION(1, 5)))
 			return -FI_ENODATA;
 		defaults.caps = FI_REMOTE_COMM;
@@ -231,16 +268,31 @@ int usdf_msg_fill_dom_attr(uint32_t version, struct fi_info *hints,
 
 	switch (hints->domain_attr->mr_mode) {
 	case FI_MR_UNSPEC:
-		/* mr_mode behavior changed in version 1.5 from a single flag to mode bits.
-		* Hence, if a version less than v1.5 was requested, return the prior default:
-		* FI_MR_BASIC. */
-		if (FI_VERSION_LT(version, FI_VERSION(1,5)))
+		/* We still have to check here, in case of the user
+		 * provided domain_attr but not mr_mode bit.
+		 */
+		if (FI_VERSION_LT(version, FI_VERSION(1, 5))) {
 			defaults.mr_mode = FI_MR_BASIC;
+		} else {
+			/* In >= 1.5, if mr_mode bit is unspecified, we will
+			 * look for FI_LOCAL_MR flag in fi_mode. If is not set,
+			 * we assume FI_MR_SCALABLE (which we don't support)
+			 * and fail.
+			 */
+			if ((hints->mode & FI_LOCAL_MR) == 0)
+				return -FI_ENODATA;
+		}
 		break;
 	default :
 		if (ofi_check_mr_mode(version, defaults.mr_mode, hints->domain_attr->mr_mode))
 			return -FI_ENODATA;
-		defaults.mr_mode = hints->domain_attr->mr_mode;
+	}
+
+	if (hints->domain_attr->mr_cnt <= USDF_MSG_MR_CNT) {
+		defaults.mr_cnt = hints->domain_attr->mr_cnt;
+	} else {
+		USDF_DBG_SYS(DOMAIN, "mr_count exceeded provider limit\n");
+		return -FI_ENODATA;
 	}
 
 out:
@@ -249,7 +301,8 @@ out:
 	return FI_SUCCESS;
 }
 
-int usdf_msg_fill_tx_attr(struct fi_info *hints, struct fi_info *fi)
+int usdf_msg_fill_tx_attr(uint32_t version, struct fi_info *hints,
+			  struct fi_info *fi)
 {
 	struct fi_tx_attr defaults;
 
@@ -265,9 +318,11 @@ int usdf_msg_fill_tx_attr(struct fi_info *hints, struct fi_info *fi)
 	/* clear the mode bits the app doesn't support */
 	defaults.mode &= (hints->mode | hints->tx_attr->mode);
 
-	/* make sure the app supports our required mode bits */
-	if ((defaults.mode & USDF_MSG_REQ_MODE) != USDF_MSG_REQ_MODE)
-		return -FI_ENODATA;
+	/* In version < 1.5, FI_LOCAL_MR is required. */
+	if (FI_VERSION_LT(version, FI_VERSION(1, 5))) {
+		if ((defaults.mode & FI_LOCAL_MR) == 0)
+			return -FI_ENODATA;
+	}
 
 	defaults.op_flags |= hints->tx_attr->op_flags;
 
@@ -297,7 +352,7 @@ out:
 	return FI_SUCCESS;
 }
 
-int usdf_msg_fill_rx_attr(struct fi_info *hints, struct fi_info *fi)
+int usdf_msg_fill_rx_attr(uint32_t version, struct fi_info *hints, struct fi_info *fi)
 {
 	struct fi_rx_attr defaults;
 
@@ -313,9 +368,11 @@ int usdf_msg_fill_rx_attr(struct fi_info *hints, struct fi_info *fi)
 	/* clear the mode bits the app doesn't support */
 	defaults.mode &= (hints->mode | hints->rx_attr->mode);
 
-	/* make sure the app supports our required mode bits */
-	if ((defaults.mode & USDF_MSG_REQ_MODE) != USDF_MSG_REQ_MODE)
-		return -FI_ENODATA;
+	/* In version < 1.5, FI_LOCAL_MR is required. */
+	if (FI_VERSION_LT(version, FI_VERSION(1, 5))) {
+		if ((defaults.mode & FI_LOCAL_MR) == 0)
+			return -FI_ENODATA;
+	}
 
 	defaults.op_flags |= hints->rx_attr->op_flags;
 
@@ -950,6 +1007,7 @@ usdf_ep_msg_open(struct fid_domain *domain, struct fi_info *info,
 	struct usdf_connreq *connreq;
 	struct usdf_pep *parent_pep;
 	int is_bound;
+	uint32_t api_version;
 
 	USDF_TRACE_SYS(EP_CTRL, "\n");
 
@@ -980,6 +1038,7 @@ usdf_ep_msg_open(struct fid_domain *domain, struct fi_info *info,
 
 	udp = dom_ftou(domain);
 	fp = udp->dom_fabric;
+	api_version = fp->fab_attr.fabric->api_version;
 
 	/* allocate peer table if not done */
 	if (udp->dom_peer_tab == NULL) {
@@ -1002,6 +1061,7 @@ usdf_ep_msg_open(struct fid_domain *domain, struct fi_info *info,
 	ep->ep_fid.ops = &usdf_base_msg_ops;
 	ep->ep_fid.cm = &usdf_cm_msg_ops;
 	ep->ep_fid.msg = &usdf_msg_ops;
+	ep->ep_fid.atomic = &usdf_msg_atomic_ops;
 	ep->ep_domain = udp;
 	ep->ep_caps = info->caps;
 	ep->ep_mode = info->mode;
@@ -1053,7 +1113,7 @@ usdf_ep_msg_open(struct fid_domain *domain, struct fi_info *info,
 		ofi_atomic_inc32(&udp->dom_refcnt);
 
 		/* use info as the hints structure, and the output structure */
-		ret = usdf_msg_fill_tx_attr(info, info);
+		ret = usdf_msg_fill_tx_attr(api_version, info, info);
 		if (ret != 0)
 			goto fail;
 		tx->tx_attr = *info->tx_attr;
@@ -1081,7 +1141,7 @@ usdf_ep_msg_open(struct fid_domain *domain, struct fi_info *info,
 		ofi_atomic_inc32(&udp->dom_refcnt);
 
 		/* info serves as both the hints and the output */
-		ret = usdf_msg_fill_rx_attr(info, info);
+		ret = usdf_msg_fill_rx_attr(api_version, info, info);
 		if (ret != 0)
 			goto fail;
 		rx->rx_attr = *info->rx_attr;

@@ -37,6 +37,7 @@
 #include "rxd.h"
 
 int rxd_progress_spin_count = 1000;
+int rxd_reposted_bufs = 0;
 
 static ssize_t rxd_ep_cancel(fid_t fid, void *context)
 {
@@ -191,6 +192,8 @@ int rxd_ep_repost_buff(struct rxd_rx_buf *buf)
 		      FI_ADDR_UNSPEC, &buf->context);
 	if (ret)
 		FI_WARN(&rxd_prov, FI_LOG_EP_CTRL, "failed to repost\n");
+	else
+		rxd_reposted_bufs++;
 	return ret;
 }
 
@@ -988,7 +991,6 @@ static ssize_t rxd_trx_peek_recv(struct rxd_ep *ep,
 static ssize_t rxd_trx_claim_recv(struct rxd_ep *ep,
 				  const struct fi_msg_tagged *msg, uint64_t flags)
 {
-	int ret = 0;
 	size_t i;
 	struct fi_context *context;
 	struct rxd_rx_entry *rx_entry;
@@ -998,11 +1000,8 @@ static ssize_t rxd_trx_claim_recv(struct rxd_ep *ep,
 	struct ofi_ctrl_hdr *ctrl;
 	struct rxd_pkt_data_start *pkt_start;
 
-	fastlock_acquire(&ep->lock);
-	if (freestack_isempty(ep->trecv_fs)) {
-		ret = -FI_EAGAIN;
-		goto out;
-	}
+	if (freestack_isempty(ep->trecv_fs))
+		return -FI_EAGAIN;
 
 	trecv_entry = freestack_pop(ep->trecv_fs);
 	trecv_entry->msg = *msg;
@@ -1028,9 +1027,7 @@ static ssize_t rxd_trx_claim_recv(struct rxd_ep *ep,
 	rxd_ep_handle_data_msg(ep, peer, rx_entry, rx_entry->trecv->iov,
 			     rx_entry->trecv->msg.iov_count, ctrl,
 			     pkt_start->data, rx_buf);
-out:
-	fastlock_release(&ep->lock);
-	return ret;
+	return 0;
 }
 
 static ssize_t rxd_ep_trecvmsg(struct fid_ep *ep, const struct fi_msg_tagged *msg,
@@ -1317,7 +1314,6 @@ static int rxd_ep_close(struct fid *fid)
 		fid_list_remove(&ep->util_ep.tx_cq->ep_list,
 				&ep->util_ep.tx_cq->ep_list_lock,
 				&ep->util_ep.ep_fid.fid);
-		ofi_atomic_dec32(&ep->util_ep.tx_cq->ref);
 	}
 
 	if (ep->util_ep.rx_cq) {
@@ -1327,7 +1323,6 @@ static int rxd_ep_close(struct fid *fid)
 					&ep->util_ep.rx_cq->ep_list_lock,
 					&ep->util_ep.ep_fid.fid);
 		}
-		ofi_atomic_dec32(&ep->util_ep.rx_cq->ref);
 	}
 
 	fastlock_destroy(&ep->lock);
@@ -1403,6 +1398,8 @@ static int rxd_ep_bind(struct fid *ep_fid, struct fid *bfid, uint64_t flags)
 		break;
 	case FI_CLASS_EQ:
 		break;
+	case FI_CLASS_CNTR:
+		return ofi_ep_bind(&ep->util_ep, bfid, flags);
 	default:
 		FI_WARN(&rxd_prov, FI_LOG_EP_CTRL,
 			"invalid fid class\n");

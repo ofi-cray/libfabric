@@ -228,13 +228,13 @@ static void rxd_handle_conn_req(struct rxd_ep *ep, struct ofi_ctrl_hdr *ctrl,
 	addr = pkt_data->data;
 	if (ctrl->seg_size > RXD_MAX_DGRAM_ADDR) {
 		FI_WARN(&rxd_prov, FI_LOG_EP_DATA, "addr too large\n");
-		return;
+		goto repost;
 	}
 
 	ret = rxd_av_insert_dg_addr(rxd_ep_av(ep), ctrl->rx_key, addr, &dg_fiaddr);
 	if (ret) {
 		FI_WARN(&rxd_prov, FI_LOG_EP_DATA, "failed to insert peer address\n");
-		return;
+		goto repost;
 	}
 
 	peer_info = rxd_ep_getpeer_info(ep, dg_fiaddr);
@@ -246,6 +246,7 @@ static void rxd_handle_conn_req(struct rxd_ep *ep, struct ofi_ctrl_hdr *ctrl,
 
 	rxd_ep_reply_ack(ep, ctrl, ofi_ctrl_connresp, 0, ctrl->conn_id,
 			 dg_fiaddr, dg_fiaddr);
+repost:
 	rxd_ep_repost_buff(rx_buf);
 }
 
@@ -281,6 +282,7 @@ static void rxd_handle_ack(struct rxd_ep *ep, struct ofi_ctrl_hdr *ctrl,
 			"reporting TX completion : %p\n", tx_entry);
 		if (tx_entry->op_type != RXD_TX_READ_REQ) {
 			rxd_cq_report_tx_comp(rxd_ep_tx_cq(ep), tx_entry);
+			rxd_cntr_report_tx_comp(ep, tx_entry);
 			rxd_tx_entry_free(ep, tx_entry);
 		}
 	} else {
@@ -317,6 +319,7 @@ static void rxd_handle_discard(struct rxd_ep *ep, struct ofi_ctrl_hdr *ctrl,
 	tx_entry = &ep->tx_entry_fs->buf[idx];
 	if (tx_entry->msg_id == ctrl->msg_id) {
 		rxd_cq_report_tx_comp(rxd_ep_tx_cq(ep), tx_entry);
+		rxd_cntr_report_tx_comp(ep, tx_entry);
 		rxd_tx_entry_done(ep, tx_entry);
 	}
 
@@ -523,7 +526,7 @@ struct rxd_trecv_entry *rxd_get_trecv_entry(struct rxd_ep *ep,
 	return trecv_entry;
 }
 
-void rxd_report_rx_comp(struct rxd_cq *cq, struct rxd_rx_entry *rx_entry)
+void rxd_cq_report_rx_comp(struct rxd_cq *cq, struct rxd_rx_entry *rx_entry)
 {
 	struct fi_cq_tagged_entry cq_entry = {0};
 
@@ -678,7 +681,8 @@ void rxd_ep_handle_data_msg(struct rxd_ep *ep, struct rxd_peer *peer,
 	}
 
 	FI_DBG(&rxd_prov, FI_LOG_EP_CTRL, "reporting RX completion event\n");
-	rxd_report_rx_comp(rxd_ep_rx_cq(ep), rx_entry);
+	rxd_cq_report_rx_comp(rxd_ep_rx_cq(ep), rx_entry);
+	rxd_cntr_report_rx_comp(ep, rx_entry);
 
 	switch(rx_entry->op_hdr.op) {
 	case ofi_op_msg:
@@ -689,6 +693,7 @@ void rxd_ep_handle_data_msg(struct rxd_ep *ep, struct rxd_peer *peer,
 		break;
 	case ofi_op_read_rsp:
 		rxd_cq_report_tx_comp(rxd_ep_tx_cq(ep), rx_entry->read_rsp.tx_entry);
+		rxd_cntr_report_tx_comp(ep, rx_entry->read_rsp.tx_entry);
 		rxd_tx_entry_done(ep, rx_entry->read_rsp.tx_entry);
 		break;
 	default:
@@ -835,7 +840,7 @@ static void rxd_handle_data(struct rxd_ep *ep, struct rxd_peer *peer,
 			rxd_ep_reply_ack(ep, ctrl, ofi_ctrl_ack, credits,
 				       ctrl->rx_key, peer->conn_data,
 				       ctrl->conn_id);
-			return;
+			goto repost;
 		}
 	}
 
@@ -1024,7 +1029,7 @@ static void rxd_handle_start_data(struct rxd_ep *ep, struct rxd_peer *peer,
 		} else {
 			FI_DBG(&rxd_prov, FI_LOG_EP_CTRL, "unexpected pkt: %d\n",
 				ctrl->seg_no);
-			goto out;
+			goto repost;
 		}
 	}
 
@@ -1064,6 +1069,7 @@ static void rxd_handle_start_data(struct rxd_ep *ep, struct rxd_peer *peer,
 repost:
 	rxd_ep_repost_buff(rx_buf);
 out:
+	assert(rxd_reposted_bufs);
 	return;
 }
 
@@ -1074,6 +1080,9 @@ void rxd_handle_recv_comp(struct rxd_ep *ep, struct fi_cq_msg_entry *comp)
 	struct rxd_peer *peer;
 
 	FI_DBG(&rxd_prov, FI_LOG_EP_CTRL, "got recv completion\n");
+
+	assert(rxd_reposted_bufs);
+	rxd_reposted_bufs--;
 
 	rx_buf = container_of(comp->op_context, struct rxd_rx_buf, context);
 	ctrl = (struct ofi_ctrl_hdr *) rx_buf->buf;
@@ -1104,6 +1113,7 @@ void rxd_handle_recv_comp(struct rxd_ep *ep, struct fi_cq_msg_entry *comp)
 		rxd_handle_data(ep, peer, ctrl, comp, rx_buf);
 		break;
 	default:
+		rxd_ep_repost_buff(rx_buf);
 		FI_WARN(&rxd_prov, FI_LOG_EP_CTRL,
 			"invalid ctrl type \n", ctrl->type);
 	}

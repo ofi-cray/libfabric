@@ -62,10 +62,6 @@
 #define RXM_BUF_SIZE 16384
 #define RXM_IOV_LIMIT 4
 
-#define RXM_MR_LOCAL(info) \
-	((FI_VERSION_LT(info->fabric_attr->api_version, FI_VERSION(1, 5)) && \
-	  (info->mode & FI_LOCAL_MR)) || (info->domain_attr->mr_mode & FI_MR_LOCAL))
-
 #define RXM_MR_VIRT_ADDR(info) ((info->domain_attr->mr_mode == FI_MR_BASIC) ||\
 				info->domain_attr->mr_mode & FI_MR_VIRT_ADDR)
 
@@ -277,21 +273,22 @@ struct rxm_buf_pool {
 };
 
 struct rxm_ep {
-	struct util_ep util_ep;
-	struct fi_info *rxm_info;
-	struct fi_info *msg_info;
-	struct fid_pep *msg_pep;
-	struct fid_eq *msg_eq;
-	struct fid_cq *msg_cq;
-	struct fid_ep *srx_ctx;
-	size_t comp_per_progress;
+	struct util_ep 		util_ep;
+	struct fi_info 		*rxm_info;
+	struct fi_info 		*msg_info;
+	struct fid_pep 		*msg_pep;
+	struct fid_eq 		*msg_eq;
+	struct fid_cq 		*msg_cq;
+	int			msg_cq_fd;
+	struct fid_ep 		*srx_ctx;
+	size_t 			comp_per_progress;
 
-	struct rxm_buf_pool tx_pool;
-	struct rxm_buf_pool rx_pool;
+	struct rxm_buf_pool 	tx_pool;
+	struct rxm_buf_pool 	rx_pool;
 
-	struct rxm_send_queue send_queue;
-	struct rxm_recv_queue recv_queue;
-	struct rxm_recv_queue trecv_queue;
+	struct rxm_send_queue 	send_queue;
+	struct rxm_recv_queue 	recv_queue;
+	struct rxm_recv_queue 	trecv_queue;
 };
 
 extern struct fi_provider rxm_prov;

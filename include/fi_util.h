@@ -543,10 +543,24 @@ struct util_wait_fd {
 	struct util_wait	util_wait;
 	struct fd_signal	signal;
 	fi_epoll_t		epoll_fd;
+	struct dlist_entry	fd_list;
+	fastlock_t		lock;
+};
+
+typedef int (*ofi_wait_fd_try_func)(void *arg);
+
+struct ofi_wait_fd_entry {
+	struct dlist_entry	entry;
+	int 			fd;
+	ofi_wait_fd_try_func	try;
+	void			*arg;
 };
 
 int ofi_wait_fd_open(struct fid_fabric *fabric, struct fi_wait_attr *attr,
 		struct fid_wait **waitset);
+int ofi_wait_fd_add(struct util_wait *wait, int fd, ofi_wait_fd_try_func try,
+		    void *arg, void *context);
+int ofi_wait_fd_del(struct util_wait *wait, int fd);
 
 
 /*
@@ -584,6 +598,8 @@ int ofi_eq_create(struct fid_fabric *fabric, struct fi_eq_attr *attr,
 				  ((mode & OFI_MR_BASIC_MAP) == OFI_MR_BASIC_MAP))
 
 #define OFI_CHECK_MR_SCALABLE(mode) (!(mode & OFI_MR_BASIC_MAP))
+
+#define OFI_CHECK_MR_LOCAL(mode) (mode & FI_MR_LOCAL)
 
 struct ofi_mr_map {
 	const struct fi_provider *prov;
@@ -739,6 +755,9 @@ struct util_ns {
 
 	size_t	name_len;
 	size_t	service_len;
+
+	int			is_initialized;
+	ofi_atomic32_t		ref;
 
 	ofi_ns_service_cmp_func_t	service_cmp;
 

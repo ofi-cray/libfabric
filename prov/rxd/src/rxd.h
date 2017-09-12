@@ -345,9 +345,9 @@ struct rxd_pkt_meta {
 	char pkt_data[]; /* rxd_pkt_data*, followed by data */
 };
 
-int rxd_info_to_core(uint32_t version, struct fi_info *rxd_info,
+int rxd_info_to_core(uint32_t version, const struct fi_info *rxd_info,
 		     struct fi_info *core_info);
-int rxd_info_to_rxd(uint32_t version, struct fi_info *core_info,
+int rxd_info_to_rxd(uint32_t version, const struct fi_info *core_info,
 		    struct fi_info *info);
 
 int rxd_fabric(struct fi_fabric_attr *attr,
@@ -415,8 +415,6 @@ void rxd_rx_entry_free(struct rxd_ep *ep, struct rxd_rx_entry *rx_entry);
 /* CQ sub-functions */
 void rxd_cq_report_error(struct rxd_cq *cq, struct fi_cq_err_entry *err_entry);
 void rxd_cq_report_tx_comp(struct rxd_cq *cq, struct rxd_tx_entry *tx_entry);
-void rxd_cq_report_rx_comp(struct rxd_cq *cq, struct rxd_rx_entry *rx_entry);
 void rxd_cntr_report_tx_comp(struct rxd_ep *ep, struct rxd_tx_entry *tx_entry);
-void rxd_cntr_report_rx_comp(struct rxd_ep *ep, struct rxd_rx_entry *rx_entry);
 
 #endif

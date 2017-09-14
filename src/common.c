@@ -69,7 +69,7 @@ int fi_poll_fd(int fd, int timeout)
 	fds.fd = fd;
 	fds.events = POLLIN;
 	ret = poll(&fds, 1, timeout);
-	return ret == -1 ? -errno : ret;
+	return ret == SOCKET_ERROR ? -ofi_sockerr() : ret;
 }
 
 uint64_t fi_tag_bits(uint64_t mem_tag_format)
@@ -487,6 +487,27 @@ int ofi_str_toaddr(const char *str, uint32_t *addr_format,
 	}
 }
 
+const char *ofi_hex_str(const uint8_t *data, size_t len)
+{
+	static char str[64];
+	const char hex[] = "0123456789abcdef";
+	size_t i, p;
+
+	if (len >= (sizeof(str) >> 1))
+		len = (sizeof(str) >> 1) - 1;
+
+	for (p = 0, i = 0; i < len; i++) {
+		str[p++] = hex[data[i] >> 4];
+		str[p++] = hex[data[i] & 0xF];
+	}
+
+	if (len == (sizeof(str) >> 1) - 1)
+		str[p++] = '~';
+
+	str[p] = '\0';
+	return str;
+}
+
 int ofi_addr_cmp(const struct fi_provider *prov, const struct sockaddr *sa1,
 		 const struct sockaddr *sa2)
 {
@@ -585,8 +606,8 @@ int fi_epoll_wait(struct fi_epoll *ep, void **contexts, int max_contexts,
 	int found = 0;
 
 	ret = poll(ep->fds, ep->nfds, timeout);
-	if (ret == -1)
-		return -errno;
+	if (ret == SOCKET_ERROR)
+		return -ofi_sockerr();
 	else if (ret == 0)
 		return 0;
 

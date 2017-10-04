@@ -60,7 +60,7 @@ static ssize_t fi_ibv_rdm_tagged_cq_readfrom(struct fid_cq *cq, void *buf,
 	     cq_entry = (ret < count) ? fi_ibv_rdm_take_first_from_cq(_cq) : NULL)
 	{
 		VERBS_DBG(FI_LOG_CQ,
-			  "\t\t-> found in ready: %p op_ctx %p, len %lu, tag 0x%llx\n",
+			  "\t\t-> found in ready: %p op_ctx %p, len %lu, tag 0x%" PRIx64 "\n",
 			  cq_entry, cq_entry->context, cq_entry->len,
 			  cq_entry->minfo.tag);
 
@@ -266,7 +266,6 @@ int fi_ibv_rdm_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 {
 	struct fi_ibv_rdm_cq *_cq;
 	int ret;
-	int param;
 
 	_cq = calloc(1, sizeof *_cq);
 	if (!_cq)
@@ -311,17 +310,7 @@ int fi_ibv_rdm_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 	dlist_init(&_cq->request_cq);
 	dlist_init(&_cq->request_errcq);
 
-	_cq->read_bunch_size = FI_IBV_RDM_DFLT_CQREAD_BUNCH_SIZE;
-	if (!fi_param_get_int(&fi_ibv_prov, "rdm_cqread_bunch_size", &param)) {
-		if (param > 0) {
-			_cq->read_bunch_size = param;
-		} else {
-			VERBS_INFO(FI_LOG_CORE,
-				   "invalid value of rdm_cqread_bunch_size\n");
-			ret = -FI_EINVAL;
-			goto err;
-		}
-	}
+	_cq->read_bunch_size = fi_ibv_gl_data.cqread_bunch_size;
 
 	*cq = &_cq->cq_fid;
 	return 0;

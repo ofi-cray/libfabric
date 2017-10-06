@@ -98,7 +98,7 @@ struct test_structure {
 	int pending;
 };
 
-Test(smrn, simple)
+Test(smrn, simple, .disabled = true)
 {
 	const int regions = REGIONS;
 	void *addresses[REGIONS];
@@ -214,7 +214,7 @@ static void *thread_func(void *context)
 }
 
 
-Test(smrn, threaded)
+Test(smrn, threaded, .disabled = true)
 {
 	const int regions = REGIONS;
 	void *addresses[REGIONS];

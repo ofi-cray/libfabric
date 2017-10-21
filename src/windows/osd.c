@@ -47,7 +47,7 @@
 
 #include "rdma/providers/fi_log.h"
 
-extern pthread_mutex_t ofi_ini_lock;
+extern struct ofi_common_locks common_locks;
 static INIT_ONCE ofi_init_once = INIT_ONCE_STATIC_INIT;
 
 static char ofi_shm_prefix[] = "Local\\";
@@ -115,6 +115,23 @@ err:
 	return SOCKET_ERROR;
 }
 
+int ofi_getsockname(SOCKET fd, struct sockaddr *addr, socklen_t *len)
+{
+	struct sockaddr_storage sock_addr;
+	size_t sock_addr_len = sizeof(sock_addr);
+	int ret;
+
+	ret = getsockname(fd, &sock_addr, (socklen_t *)&sock_addr_len);
+	if (ret)
+		return ret;
+
+	if (addr)
+		memcpy(addr, &sock_addr, MIN(*len, sock_addr_len));
+	*len = sock_addr_len;
+
+	return FI_SUCCESS;
+}
+
 int fi_read_file(const char *dir, const char *file, char *buf, size_t size)
 {
 	char *path = 0;
@@ -162,9 +179,14 @@ fn_nomem:
 
 static BOOL CALLBACK ofi_init_once_cb(PINIT_ONCE once, void* data, void** ctx)
 {
+	struct ofi_common_locks *locks = (struct ofi_common_locks *)data;
+
 	OFI_UNUSED(once);
 	OFI_UNUSED(ctx);
-	InitializeCriticalSection((CRITICAL_SECTION*)data);
+
+	InitializeCriticalSection(&locks->ini_lock);
+	InitializeCriticalSection(&locks->util_fabric_lock);
+
 	return TRUE;
 }
 
@@ -175,7 +197,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 
 	switch (reason) {
 	case DLL_PROCESS_ATTACH:
-		InitOnceExecuteOnce(&ofi_init_once, ofi_init_once_cb, &ofi_ini_lock, 0);
+		InitOnceExecuteOnce(&ofi_init_once, ofi_init_once_cb,
+				    &common_locks, 0);
 		break;
 	case DLL_THREAD_ATTACH:
 		break;

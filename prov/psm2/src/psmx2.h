@@ -83,8 +83,8 @@ extern struct fi_provider psmx2_prov;
 
 #define PSMX2_CAPS	(FI_TAGGED | FI_MSG | FI_ATOMICS | \
 			 FI_RMA | FI_MULTI_RECV | \
-                         FI_READ | FI_WRITE | FI_SEND | FI_RECV | \
-                         FI_REMOTE_READ | FI_REMOTE_WRITE | \
+			 FI_READ | FI_WRITE | FI_SEND | FI_RECV | \
+			 FI_REMOTE_READ | FI_REMOTE_WRITE | \
 			 FI_TRIGGER | FI_RMA_EVENT | FI_REMOTE_CQ_DATA | \
 			 FI_SOURCE | FI_SOURCE_ERR | FI_DIRECTED_RECV | \
 			 FI_NAMED_RX_CTX)
@@ -150,8 +150,8 @@ extern struct fi_provider psmx2_prov;
 #define PSMX2_ADDR_TO_VL(addr)		((uint8_t)((addr & PSMX2_VL_MASK) >> 56))
 #define PSMX2_ADDR_TO_EP(addr)		((psm2_epaddr_t) \
 						((addr & PSMX2_SIGN_MASK) ? \
-                                                 (addr | PSMX2_SIGN_EXT) : \
-                                                 (addr & PSMX2_EP_MASK)))
+						 (addr | PSMX2_SIGN_EXT) : \
+						 (addr & PSMX2_EP_MASK)))
 
 #define PSMX2_MAX_RX_CTX_BITS		(12)
 #define PSMX2_SEP_ADDR_FLAG		(0x000E000000000000UL)
@@ -203,9 +203,10 @@ union psmx2_pi {
 #define PSMX2_CTXT_USER(fi_context)	((fi_context)->internal[2])
 #define PSMX2_CTXT_EP(fi_context)	((fi_context)->internal[3])
 
-#define PSMX2_AM_RMA_HANDLER	0
-#define PSMX2_AM_ATOMIC_HANDLER	1
-#define PSMX2_AM_SEP_HANDLER	2
+#define PSMX2_AM_RMA_HANDLER		0
+#define PSMX2_AM_ATOMIC_HANDLER		1
+#define PSMX2_AM_SEP_HANDLER		2
+#define PSMX2_AM_TRX_CTXT_HANDLER	3
 
 #define PSMX2_AM_OP_MASK	0x000000FF
 #define PSMX2_AM_DST_MASK	0x0000FF00
@@ -241,6 +242,7 @@ enum {
 	PSMX2_AM_REQ_READV,
 	PSMX2_AM_REQ_SEP_QUERY,
 	PSMX2_AM_REP_SEP_QUERY,
+	PSMX2_AM_REQ_TRX_CTXT_DISCONNECT,
 };
 
 struct psmx2_am_request {
@@ -387,6 +389,10 @@ struct psmx2_trx_ctxt {
 	 * interleaved in a multithreaded environment.
 	 */
 	fastlock_t		poll_lock;
+
+	/* list of peers connected to this tx/rx context */
+	struct dlist_entry	peer_list;
+	fastlock_t		peer_lock;
 
 	struct dlist_entry	entry;
 };
@@ -836,6 +842,8 @@ struct psmx2_fid_mr {
 struct psmx2_epaddr_context {
 	struct psmx2_trx_ctxt	*trx_ctxt;
 	psm2_epid_t		epid;
+	psm2_epaddr_t		epaddr;
+	struct dlist_entry	entry;
 };
 
 struct psmx2_env {
@@ -1054,15 +1062,15 @@ static inline int psmx2_av_check_table_idx(struct psmx2_fid_av *av, size_t idx)
 	 * Avoid connecting to the same destination from multiple threads.
 	 */
 	if (!av->epaddrs[idx]) {
-                err = psmx2_epid_to_epaddr(av->domain->base_trx_ctxt,
-                                           av->epids[idx], &av->epaddrs[idx]);
-                if (err) {
-                        FI_WARN(&psmx2_prov, FI_LOG_AV,
-                                "fatal error: unable to translate epid %lx to epaddr.\n",
-                                av->epids[idx]);
-                        return err;
-                }
-        }
+		err = psmx2_epid_to_epaddr(av->domain->base_trx_ctxt,
+					   av->epids[idx], &av->epaddrs[idx]);
+		if (err) {
+			FI_WARN(&psmx2_prov, FI_LOG_AV,
+				"fatal error: unable to translate epid %lx to epaddr.\n",
+				av->epids[idx]);
+			return err;
+		}
+	}
 
 	return 0;
 }
@@ -1086,6 +1094,9 @@ int	psmx2_am_atomic_handler_ext(psm2_am_token_t token,
 				    struct psmx2_trx_ctxt *trx_ctxt);
 int	psmx2_am_sep_handler(psm2_am_token_t token, psm2_amarg_t *args, int nargs,
 			     void *src, uint32_t len);
+int	psmx2_am_trx_ctxt_handler_ext(psm2_am_token_t token,
+				      psm2_amarg_t *args, int nargs, void *src, uint32_t len,
+				      struct psmx2_trx_ctxt *trx_ctxt);
 void	psmx2_atomic_global_init(void);
 void	psmx2_atomic_global_fini(void);
 

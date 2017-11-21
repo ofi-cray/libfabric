@@ -185,8 +185,9 @@ fi_ibv_rdm_prepare_conn_memory(struct fi_ibv_rdm_ep *ep,
 	}
 
 	conn->ack_mr = ibv_reg_mr(ep->domain->pd, &conn->sbuf_ack_status,
-		sizeof(conn->sbuf_ack_status),
-		IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
+				  sizeof(conn->sbuf_ack_status),
+				  IBV_ACCESS_LOCAL_WRITE |
+				  IBV_ACCESS_REMOTE_WRITE);
 
 	if (!conn->ack_mr) {
 		assert(conn->ack_mr);
@@ -705,14 +706,15 @@ fi_ibv_rdm_process_event_rejected(const struct rdma_cm_event *event,
 	ssize_t ret = FI_SUCCESS;
 	const int *pdata = event->param.conn.private_data;
 
-	if ((pdata && *pdata == 0xdeadbeef) ||
-	    /*
-	     * TODO: this is a workaround of the case when private_data is not
-	     * arriving from rdma_reject call on iWarp devices
-	     */
-	    (conn->cm_role == FI_VERBS_CM_PASSIVE &&
-	     event->status == -ECONNREFUSED))
-	{
+	if (ep->is_closing) {
+		conn->state = FI_VERBS_CONN_CLOSED;
+	} else if ((pdata && *pdata == 0xdeadbeef) ||
+		/*
+		 * TODO: this is a workaround of the case when private_data is not
+		 * arriving from rdma_reject call on iWarp devices
+		 */
+		   (conn->cm_role == FI_VERBS_CM_PASSIVE &&
+		    event->status == -ECONNREFUSED)) {
 		rdma_destroy_qp(event->id);
 
 		if (rdma_destroy_id(event->id)) {
@@ -721,26 +723,28 @@ fi_ibv_rdm_process_event_rejected(const struct rdma_cm_event *event,
 			if (ret == FI_SUCCESS)
 				ret = -errno;
 		}
-		VERBS_INFO(FI_LOG_AV,
-			"Rejected from conn %p, addr %s:%u, cm_role %d, status %d\n",
-			conn, inet_ntoa(conn->addr.sin_addr),
-			ntohs(conn->addr.sin_port),
-			conn->cm_role,
-			event->status);
 	} else {
 		VERBS_INFO(FI_LOG_AV,
-			"Unexpected REJECT from conn %p, addr %s:%u, cm_role %d, "
-			"msg len %d, msg %x, status %d, err %d\n",
-			conn, inet_ntoa(conn->addr.sin_addr),
-			ntohs(conn->addr.sin_port),
-			conn->cm_role,
-			event->param.conn.private_data_len,
-			event->param.conn.private_data ?
-			*(int *)event->param.conn.private_data : 0,
-			event->status, errno);
+			   "Unexpected REJECT from conn %p, addr %s:%u, cm_role %d, "
+			   "msg len %d, msg %x, status %d, err %d\n",
+			   conn, inet_ntoa(conn->addr.sin_addr),
+			   ntohs(conn->addr.sin_port),
+			   conn->cm_role,
+			   event->param.conn.private_data_len,
+			   event->param.conn.private_data ?
+			   *(int *)event->param.conn.private_data : 0,
+			   event->status, errno);
 		conn->state = FI_VERBS_CONN_REJECTED;
-
+		return FI_SUCCESS;	
 	}
+
+	VERBS_INFO(FI_LOG_AV,
+		   "Rejected %s from conn %p, addr %s:%u, cm_role %d, status %d\n",
+		   (ep->is_closing ? "(not handled)" : ""),
+		   conn, inet_ntoa(conn->addr.sin_addr),
+		   ntohs(conn->addr.sin_port),
+		   conn->cm_role,
+		   event->status);
 	return ret;
 }
 

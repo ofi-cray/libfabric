@@ -7,7 +7,7 @@ tagline: Libfabric Programmer's Manual
 
 # NAME
 
-The PSM2 Fabric Provider
+fi_psm2 \- The PSM2 Fabric Provider
 
 # OVERVIEW
 
@@ -93,7 +93,7 @@ Scalable endpoints
 
 Unsupported features
 : These features are unsupported: connection management, 
-  passive endpoint, shared receive context,
+  passive endpoint, shared send context, shared receive context,
   and send/inject with immediate data over tagged message queue.
 
 # RUNTIME PARAMETERS

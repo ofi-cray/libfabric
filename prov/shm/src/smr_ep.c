@@ -650,11 +650,6 @@ static ssize_t smr_generic_sendmsg(struct fid_ep *ep_fid, const struct iovec *io
 
 	ep = container_of(ep_fid, struct smr_ep, util_ep.ep_fid.fid);
 	peer_id = (int) addr;
-	if (smr_peer_addr(ep->region)[peer_id].addr == FI_ADDR_UNSPEC) {
-		FI_WARN(&smr_prov, FI_LOG_EP_CTRL,
-			"peer not ready to receive messages\n");
-		return -FI_EAGAIN;
-	}
 
 	if (ep->region->map->peers[peer_id].peer.addr == FI_ADDR_UNSPEC) {
 		ret = smr_map_to_region(&smr_prov, &ep->region->map->peers[peer_id]);
@@ -948,6 +943,8 @@ static int smr_ep_close(struct fid *fid)
 		smr_free(ep->region);
 
 	smr_recv_fs_free(ep->recv_fs);
+	smr_unexp_fs_free(ep->unexp_fs);
+	smr_pend_fs_free(ep->pend_fs);
 	free(ep);
 	return 0;
 }
@@ -1065,29 +1062,52 @@ static struct fi_ops smr_ep_fi_ops = {
 	.ops_open = fi_no_ops_open,
 };
 
+static int smr_endpoint_name(char *name, char *addr, size_t addrlen,
+			     int pid, int dom_idx, int ep_idx)
+{
+	memset(name, 0, SMR_NAME_SIZE);
+	if (addr) {
+		if (addrlen > SMR_NAME_SIZE)
+			return -FI_EINVAL;
+		snprintf(name, addrlen, "%s", addr);
+	} else {
+		snprintf(name, SMR_NAME_SIZE, "%d:%d:%d", pid, dom_idx, ep_idx);
+	}
+	return 0;
+}
+
 int smr_endpoint(struct fid_domain *domain, struct fi_info *info,
 		  struct fid_ep **ep_fid, void *context)
 {
 	struct smr_ep *ep;
-	int ret;
+	struct smr_domain *smr_domain;
+	int ret, ep_idx;
+	char name[SMR_NAME_SIZE];
 
 	ep = calloc(1, sizeof(*ep));
 	if (!ep)
 		return -FI_ENOMEM;
 
-	if (info->src_addr && info->src_addrlen) {
-		ret = smr_setname(&ep->util_ep.ep_fid.fid, info->src_addr,
-				  info->src_addrlen);
-		if (ret)
-			goto err;
-	}
+	smr_domain = container_of(domain, struct smr_domain, util_domain.domain_fid);
+
+	fastlock_acquire(&smr_domain->util_domain.lock);
+	ep_idx = smr_domain->ep_idx++;
+	fastlock_release(&smr_domain->util_domain.lock);
+	ret = smr_endpoint_name(name, info->src_addr, info->src_addrlen, getpid(),
+				smr_domain->dom_idx, ep_idx);
+	if (ret)
+		goto err2;
+
+	ret = smr_setname(&ep->util_ep.ep_fid.fid, name, SMR_NAME_SIZE);
+	if (ret)
+		goto err2;
 
 	ep->rx_size = info->rx_attr->size;
 	ep->tx_size = info->tx_attr->size;
 	ret = ofi_endpoint_init(domain, &smr_util_prov, info, &ep->util_ep, context,
 				smr_ep_progress);
 	if (ret)
-		goto err;
+		goto err1;
 
 	ep->recv_fs = smr_recv_fs_create(info->rx_attr->size);
 	ep->unexp_fs = smr_unexp_fs_create(info->rx_attr->size);
@@ -1105,8 +1125,10 @@ int smr_endpoint(struct fid_domain *domain, struct fi_info *info,
 
 	*ep_fid = &ep->util_ep.ep_fid;
 	return 0;
-err:
+
+err1:
 	free((void *)ep->name);
+err2:
 	free(ep);
 	return ret;
 }

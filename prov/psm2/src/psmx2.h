@@ -1070,17 +1070,17 @@ int	psmx2_am_process_rma(struct psmx2_trx_ctxt *trx_ctxt,
 				struct psmx2_am_request *req);
 int	psmx2_process_trigger(struct psmx2_trx_ctxt *trx_ctxt,
 				struct psmx2_trigger *trigger);
-int	psmx2_am_rma_handler_ext(psm2_am_token_t token,
-				 psm2_amarg_t *args, int nargs, void *src, uint32_t len,
-				 struct psmx2_trx_ctxt *trx_ctxt);
-int	psmx2_am_atomic_handler_ext(psm2_am_token_t token,
-				    psm2_amarg_t *args, int nargs, void *src, uint32_t len,
-				    struct psmx2_trx_ctxt *trx_ctxt);
+int psmx2_am_rma_handler(psm2_am_token_t token, psm2_amarg_t *args,
+			     int nargs, void *src, uint32_t len,
+			     void *hctx);
+int psmx2_am_atomic_handler(psm2_am_token_t token,
+				psm2_amarg_t *args, int nargs, void *src,
+				uint32_t len, void *hctx);
 int	psmx2_am_sep_handler(psm2_am_token_t token, psm2_amarg_t *args, int nargs,
-			     void *src, uint32_t len);
-int	psmx2_am_trx_ctxt_handler_ext(psm2_am_token_t token,
+			     void *src, uint32_t len, void *hctx);
+int	psmx2_am_trx_ctxt_handler(psm2_am_token_t token,
 				      psm2_amarg_t *args, int nargs, void *src, uint32_t len,
-				      struct psmx2_trx_ctxt *trx_ctxt);
+				      void *hctx);
 void	psmx2_atomic_global_init(void);
 void	psmx2_atomic_global_fini(void);
 
@@ -1112,7 +1112,7 @@ int	psmx2_mr_validate(struct psmx2_fid_mr *mr, uint64_t addr, size_t len, uint64
 void	psmx2_cntr_check_trigger(struct psmx2_fid_cntr *cntr);
 void	psmx2_cntr_add_trigger(struct psmx2_fid_cntr *cntr, struct psmx2_trigger *trigger);
 
-int	psmx2_handle_sendv_req(struct psmx2_fid_ep *ep, psm2_mq_status2_t *psm2_status,
+int	psmx2_handle_sendv_req(struct psmx2_fid_ep *ep, PSMX2_STATUS_TYPE *status,
 			       int multi_recv);
 
 static inline void psmx2_cntr_inc(struct psmx2_fid_cntr *cntr)

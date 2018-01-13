@@ -119,6 +119,9 @@
 #define FI_IBV_BUF_ALIGNMENT (4096) /* TODO: Page or MTU size */
 #define FI_IBV_POOL_BUF_CNT (100)
 
+#define VERBS_ANY_DOMAIN "verbs_any_domain"
+#define VERBS_ANY_FABRIC "verbs_any_fabric"
+
 /* NOTE:
  * When ibv_post_send/recv returns '-1' it means the following:
  * Deal with non-compliant libibverbs drivers which set errno
@@ -533,7 +536,7 @@ fi_ibv_mem_notifier_set_free_hook(fi_ibv_mem_free_hook free_hook)
 #  pragma clang diagnostic ignored "-Wdeprecated-declarations"
 	__free_hook = free_hook;
 #  pragma clang diagnostic pop
-# elif defined __GNUC__ /* GCC */
+# elif __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6) /* GCC >= 4.6 */
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 	__free_hook = free_hook;
@@ -560,7 +563,7 @@ fi_ibv_mem_notifier_set_realloc_hook(fi_ibv_mem_realloc_hook realloc_hook)
 #  pragma clang diagnostic ignored "-Wdeprecated-declarations"
 	__realloc_hook = realloc_hook;
 #  pragma clang diagnostic pop
-# elif defined __GNUC__ /* GCC */
+# elif __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6) /* GCC >= 4.6 */
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 	__realloc_hook = realloc_hook;
@@ -587,7 +590,7 @@ fi_ibv_mem_notifier_get_free_hook(void)
 #  pragma clang diagnostic ignored "-Wdeprecated-declarations"
 	return __free_hook;
 #  pragma clang diagnostic pop
-# elif defined __GNUC__ /* GCC */
+# elif __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6) /* GCC >= 4.6 */
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 	return __free_hook;
@@ -614,7 +617,7 @@ fi_ibv_mem_notifier_get_realloc_hook(void)
 #  pragma clang diagnostic ignored "-Wdeprecated-declarations"
 	return __realloc_hook;
 #  pragma clang diagnostic pop
-# elif defined __GNUC__ /* GCC */
+# elif __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6) /* GCC >= 4.6 */
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 	return __realloc_hook;

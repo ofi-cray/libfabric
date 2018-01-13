@@ -206,8 +206,7 @@ static inline int psmx2_cq_any_complete(struct psmx2_fid_cq *poll_cq,
 		event->cqe.err.flags = flags;
 		event->cqe.err.err = -psmx2_errno(PSMX2_STATUS_ERROR(status));
 		event->cqe.err.prov_errno = PSMX2_STATUS_ERROR(status);
-		event->cqe.err.tag = PSMX2_STATUS_TAG(status).tag0 |
-				     (((uint64_t)PSMX2_STATUS_TAG(status).tag1) << 32);
+		event->cqe.err.tag = PSMX2_GET_TAG64(PSMX2_STATUS_TAG(status));
 		event->cqe.err.olen = PSMX2_STATUS_SNDLEN(status) - PSMX2_STATUS_RCVLEN(status);
 		event->cqe.err.data = data;
 
@@ -1064,6 +1063,10 @@ static ssize_t psmx2_cq_sreadfrom(struct fid_cq *cq, void *buf, size_t count,
 	event_count = cq_priv->event_count;
 	if (event_count < threshold) {
 		if (cq_priv->wait) {
+			if (ofi_atomic_get32(&cq_priv->signaled)) {
+				ofi_atomic_set32(&cq_priv->signaled, 0);
+				return -FI_ECANCELED;
+			}
 			fi_wait((struct fid_wait *)cq_priv->wait, timeout);
 		} else {
 			clock_gettime(CLOCK_REALTIME, &ts0);
@@ -1085,6 +1088,11 @@ static ssize_t psmx2_cq_sreadfrom(struct fid_cq *cq, void *buf, size_t count,
 				/* CQ may be updated asynchronously by the AM handlers */
 				if (cq_priv->event_count > event_count)
 					break;
+
+				if (ofi_atomic_get32(&cq_priv->signaled)) {
+					ofi_atomic_set32(&cq_priv->signaled, 0);
+					return -FI_ECANCELED;
+				}
 
 				if (timeout < 0)
 					continue;
@@ -1113,6 +1121,7 @@ static int psmx2_cq_signal(struct fid_cq *cq)
 	struct psmx2_fid_cq *cq_priv;
 	cq_priv = container_of(cq, struct psmx2_fid_cq, cq);
 
+	ofi_atomic_set32(&cq_priv->signaled, 1);
 	if (cq_priv->wait)
 		cq_priv->wait->signal(cq_priv->wait);
 
@@ -1308,6 +1317,7 @@ int psmx2_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
 		cq_priv->wait_cond = attr->wait_cond;
 	}
 	cq_priv->wait_is_local = wait_is_local;
+	ofi_atomic_initialize32(&cq_priv->signaled, 0);
 
 	cq_priv->cq.fid.fclass = FI_CLASS_CQ;
 	cq_priv->cq.fid.context = context;

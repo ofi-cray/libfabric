@@ -221,7 +221,7 @@ static int psmx2_getinfo(uint32_t version, const char *node,
 	enum fi_progress control_progress = FI_PROGRESS_MANUAL;
 	enum fi_progress data_progress = FI_PROGRESS_MANUAL;
 	uint64_t caps = PSMX2_CAPS;
-	uint64_t max_tag_value = -1ULL;
+	uint64_t max_tag_value = PSMX2_MAX_TAG;
 	int err = -FI_ENODATA;
 	int svc0, svc = PSMX2_ANY_SERVICE;
 	glob_t glob_buf;
@@ -571,7 +571,6 @@ static int psmx2_getinfo(uint32_t version, const char *node,
 					PSMX2_MAX_MSG_SIZE);
 				goto err_out;
 			}
-			max_tag_value = fi_tag_bits(hints->ep_attr->mem_tag_format);
 		}
 
 		if (hints->tx_attr) {
@@ -667,7 +666,7 @@ static int psmx2_getinfo(uint32_t version, const char *node,
 	psmx2_info->ep_attr->max_order_raw_size = PSMX2_RMA_ORDER_SIZE;
 	psmx2_info->ep_attr->max_order_war_size = PSMX2_RMA_ORDER_SIZE;
 	psmx2_info->ep_attr->max_order_waw_size = PSMX2_RMA_ORDER_SIZE;
-	psmx2_info->ep_attr->mem_tag_format = fi_tag_format(max_tag_value);
+	psmx2_info->ep_attr->mem_tag_format = ofi_tag_format(max_tag_value);
 	psmx2_info->ep_attr->tx_ctx_cnt = tx_ctx_cnt;
 	psmx2_info->ep_attr->rx_ctx_cnt = rx_ctx_cnt;
 

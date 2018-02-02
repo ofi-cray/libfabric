@@ -102,21 +102,78 @@ extern struct fi_provider psmx2_prov;
 				 FI_ORDER_WAR | FI_ORDER_WAW)
 #define PSMX2_COMP_ORDER	FI_ORDER_NONE
 
-#define PSMX2_MSG_BIT	(0x80000000)
-#define PSMX2_RMA_BIT	(0x40000000)
-#define PSMX2_IOV_BIT	(0x20000000)
-#define PSMX2_IMM_BIT	(0x10000000)
-#define PSMX2_SEQ_BITS	(0x0FFF0000)
+/*
+ * Four bits are reserved from the 64-bit tag space as a flags to identify the
+ * type and properties of the messages.
+ *
+ * To conserve tag bits, we use a couple otherwise invalid bit combinations
+ * to distinguish RMA long reads from long writes and distinguish iovec
+ * payloads from regular messages.
+ *
+ * We never match on the immediate bit. Regular tagged and untagged messages
+ * do not match on the iov bit, but the iov and imm bits are checked when we
+ * process completions.
+ *
+ *                   MSG RMA IOV IMM
+ * tagged message    0   0   x   x
+ * untagged message  1   0   x   x
+ * rma long read     0   1   0   x
+ * rma long write    0   1   1   x
+ * iov payload       1   1   x   x
+ */
 
-#define PSMX2_TAG32_GET_SEQ(tag32)	(((tag32) & PSMX2_SEQ_BITS) >> 16)
-#define PSMX2_TAG32_SET_SEQ(tag32,seq)	do { \
-						tag32 |= ((seq << 16) & PSMX2_SEQ_BITS); \
-					} while (0)
+#define PSMX2_MSG_BIT		(0x80000000)
+#define PSMX2_RMA_BIT		(0x40000000)
+#define PSMX2_IOV_BIT		(0x20000000)
+#define PSMX2_IMM_BIT		(0x10000000)
+
+/* Top two bits of the flag are the message type */
+#define PSMX2_TYPE_TAGGED	(0)
+#define PSMX2_TYPE_MSG		PSMX2_MSG_BIT
+#define PSMX2_TYPE_RMA		PSMX2_RMA_BIT
+#define PSMX2_TYPE_IOV_PAYLOAD	(PSMX2_MSG_BIT | PSMX2_RMA_BIT)
+#define PSMX2_TYPE_MASK		(PSMX2_MSG_BIT | PSMX2_RMA_BIT)
+
+/*
+ * For RMA protocol, use the IOV bit to distinguish between long RMA write
+ * and long RMA read. This prevents tag collisions between reads/writes issued
+ * locally and the writes/reads issued by peers. RMA doesn't use this bit for
+ * IOV support so it's safe to do so.
+ */
+#define PSMX2_RMA_TYPE_READ	PSMX2_TYPE_RMA
+#define PSMX2_RMA_TYPE_WRITE	(PSMX2_TYPE_RMA | PSMX2_IOV_BIT)
+#define PSMX2_RMA_TYPE_MASK	(PSMX2_TYPE_MASK | PSMX2_IOV_BIT)
+
+/* IOV header is only possible when the RMA bit is 0 */
+#define PSMX2_IOV_HEADER_MASK		(PSMX2_IOV_BIT | PSMX2_RMA_BIT)
+
+#define PSMX2_IS_IOV_HEADER(flags)	(((flags) & PSMX2_IOV_HEADER_MASK) == PSMX2_IOV_BIT)
+#define PSMX2_IS_IOV_PAYLOAD(flags)	(((flags) & PSMX2_TYPE_MASK) == PSMX2_TYPE_IOV_PAYLOAD)
+#define PSMX2_IS_RMA(flags)		(((flags) & PSMX2_TYPE_MASK) == PSMX2_TYPE_RMA)
+#define PSMX2_IS_MSG(flags)		(((flags) & PSMX2_TYPE_MASK) == PSMX2_TYPE_MSG)
+#define PSMX2_IS_TAGGED(flags)		(((flags) & PSMX2_TYPE_MASK) == PSMX2_TYPE_TAGGED)
+#define PSMX2_HAS_IMM(flags)		((flags) & PSMX2_IMM_BIT)
+
+/* Set a bit conditionally without branching.  Flag must be 1 or 0. */
+#define PSMX2_MSG_BIT_SET(flag) (-(uint32_t)flag & PSMX2_MSG_BIT)
+#define PSMX2_RMA_BIT_SET(flag) (-(uint32_t)flag & PSMX2_RMA_BIT)
+#define PSMX2_IOV_BIT_SET(flag) (-(uint32_t)flag & PSMX2_IOV_BIT)
+#define PSMX2_IMM_BIT_SET(flag) (-(uint32_t)flag & PSMX2_IMM_BIT)
+
+#define PSMX2_TAG_UPPER_MASK	((uint32_t)0x0FFFFFFF)
+#define PSMX2_TAG_MASK		(0x0FFFFFFFFFFFFFFFULL)
+#define PSMX2_MAX_TAG		PSMX2_TAG_MASK
+#define PSMX2_MATCH_ALL		(-1ULL)
+#define PSMX2_MATCH_NONE	(0ULL)
+
+#define PSMX2_PRINT_TAG(tag96) \
+	printf("%s: %08x %08x %08x\n", __func__, tag96.tag0, tag96.tag1, tag96.tag2)
 
 /*
  * psm2_mq_tag_t is a union type of 96 bits. These functions are used to
  * access the first 64 bits without generating the warning "dereferencing
- * type-punned pointer will break strict-aliasing rules".
+ * type-punned pointer will break strict-aliasing rules". This is faster
+ * than combining two 32-bit values with bit operations.
  *
  * Notice:
  * (1) *(uint64_t *)tag96 works, but *(uint64_t *)tag96->tag doesn't;
@@ -134,21 +191,22 @@ static inline uint64_t psmx2_get_tag64(psm2_mq_tag_t *tag96)
 	return *(uint64_t *)tag96;
 }
 
-#define PSMX2_SET_TAG(tag96,tag64,tag32) do { \
-						psmx2_set_tag64(&(tag96),(tag64)); \
-						tag96.tag2 = tag32; \
-					} while (0)
+#define PSMX2_SET_TAG_INTERNAL(tag96,tag,cq_data,flags) \
+	do { \
+		psmx2_set_tag64(&(tag96),(tag) & PSMX2_TAG_MASK); \
+		(tag96).tag1 |= (flags); \
+		(tag96).tag2 = (cq_data); \
+	} while (0)
 
-#define PSMX2_SET_TAG64(tag96,tag64)	psmx2_set_tag64(&(tag96),(tag64))
-#define PSMX2_GET_TAG64(tag96)		psmx2_get_tag64(&(tag96))
+#define PSMX2_SET_TAG(tag96,tag,cq_data,flags) \
+	PSMX2_SET_TAG_INTERNAL(tag96,tag,cq_data,flags)
 
-/*
- * When using the long RMA protocol, set a bit in the unused SEQ bits to
- * indicate whether or not the operation is a read or a write. This prevents tag
- * collisions.
- */
-#define PSMX2_TAG32_LONG_WRITE(tag32) PSMX2_TAG32_SET_SEQ(tag32, 0x1)
-#define PSMX2_TAG32_LONG_READ(tag32)  PSMX2_TAG32_SET_SEQ(tag32, 0x2)
+#define PSMX2_SET_MASK(tagsel96,tag_mask,flag_mask) \
+	PSMX2_SET_TAG_INTERNAL(tagsel96,tag_mask,0,flag_mask)
+
+#define PSMX2_GET_TAG64(tag96)	(psmx2_get_tag64(&(tag96)) & PSMX2_TAG_MASK)
+#define PSMX2_GET_FLAGS(tag96)	((tag96).tag1 & ~PSMX2_TAG_UPPER_MASK)
+#define PSMX2_GET_CQDATA(tag96)	((tag96).tag2)
 
 /*
  * Canonical virtual address on X86_64 only uses 48 bits and the higher 16 bits
@@ -303,7 +361,7 @@ struct psmx2_am_request {
 
 #define PSMX2_IOV_PROTO_PACK	0
 #define PSMX2_IOV_PROTO_MULTI	1
-#define PSMX2_IOV_MAX_SEQ_NUM	0x0FFF
+#define PSMX2_IOV_MAX_SEQ_NUM 	0x7fffffff
 #define PSMX2_IOV_BUF_SIZE	64
 #define PSMX2_IOV_MAX_COUNT	(PSMX2_IOV_BUF_SIZE / sizeof(uint32_t) - 3)
 
@@ -696,21 +754,21 @@ static inline void psmx2_unlock(fastlock_t *lock, int lock_level)
 }
 
 int	psmx2_fabric(struct fi_fabric_attr *attr,
-		    struct fid_fabric **fabric, void *context);
+		     struct fid_fabric **fabric, void *context);
 int	psmx2_domain_open(struct fid_fabric *fabric, struct fi_info *info,
-			 struct fid_domain **domain, void *context);
+			  struct fid_domain **domain, void *context);
 int	psmx2_ep_open(struct fid_domain *domain, struct fi_info *info,
-		     struct fid_ep **ep, void *context);
+		      struct fid_ep **ep, void *context);
 int	psmx2_sep_open(struct fid_domain *domain, struct fi_info *info,
 		       struct fid_ep **sep, void *context);
 int	psmx2_stx_ctx(struct fid_domain *domain, struct fi_tx_attr *attr,
-		     struct fid_stx **stx, void *context);
+		      struct fid_stx **stx, void *context);
 int	psmx2_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
-		     struct fid_cq **cq, void *context);
+		      struct fid_cq **cq, void *context);
 int	psmx2_av_open(struct fid_domain *domain, struct fi_av_attr *attr,
-		     struct fid_av **av, void *context);
+		      struct fid_av **av, void *context);
 int	psmx2_cntr_open(struct fid_domain *domain, struct fi_cntr_attr *attr,
-		       struct fid_cntr **cntr, void *context);
+		        struct fid_cntr **cntr, void *context);
 int	psmx2_wait_open(struct fid_fabric *fabric, struct fi_wait_attr *attr,
 			struct fid_wait **waitset);
 int	psmx2_wait_trywait(struct fid_fabric *fabric, struct fid **fids,
@@ -772,12 +830,12 @@ void	psmx2_query_mpi(void);
 
 void	psmx2_cq_enqueue_event(struct psmx2_fid_cq *cq, struct psmx2_cq_event *event);
 struct	psmx2_cq_event *psmx2_cq_create_event(struct psmx2_fid_cq *cq,
-					void *op_context, void *buf,
-					uint64_t flags, size_t len,
-					uint64_t data, uint64_t tag,
-					size_t olen, int err);
+					      void *op_context, void *buf,
+					      uint64_t flags, size_t len,
+					      uint64_t data, uint64_t tag,
+					      size_t olen, int err);
 int	psmx2_cq_poll_mq(struct psmx2_fid_cq *cq, struct psmx2_trx_ctxt *trx_ctxt,
-			struct psmx2_cq_event *event, int count, fi_addr_t *src_addr);
+			 struct psmx2_cq_event *event, int count, fi_addr_t *src_addr);
 
 int	psmx2_epid_to_epaddr(struct psmx2_trx_ctxt *trx_ctxt,
 			     psm2_epid_t epid, psm2_epaddr_t *epaddr);
@@ -820,9 +878,9 @@ int	psmx2_am_init(struct psmx2_trx_ctxt *trx_ctxt);
 void	psmx2_am_fini(struct psmx2_trx_ctxt *trx_ctxt);
 int	psmx2_am_progress(struct psmx2_trx_ctxt *trx_ctxt);
 int	psmx2_am_process_send(struct psmx2_trx_ctxt *trx_ctxt,
-				struct psmx2_am_request *req);
+			      struct psmx2_am_request *req);
 int	psmx2_am_process_rma(struct psmx2_trx_ctxt *trx_ctxt,
-				struct psmx2_am_request *req);
+			     struct psmx2_am_request *req);
 int	psmx2_am_rma_handler(psm2_am_token_t token, psm2_amarg_t *args,
 			     int nargs, void *src, uint32_t len,
 			     void *hctx);
@@ -832,8 +890,8 @@ int	psmx2_am_atomic_handler(psm2_am_token_t token,
 int	psmx2_am_sep_handler(psm2_am_token_t token, psm2_amarg_t *args, int nargs,
 			     void *src, uint32_t len, void *hctx);
 int	psmx2_am_trx_ctxt_handler(psm2_am_token_t token,
-				      psm2_amarg_t *args, int nargs, void *src, uint32_t len,
-				      void *hctx);
+				  psm2_amarg_t *args, int nargs, void *src, uint32_t len,
+				  void *hctx);
 void	psmx2_atomic_global_init(void);
 void	psmx2_atomic_global_fini(void);
 

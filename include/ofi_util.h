@@ -31,8 +31,8 @@
  * SOFTWARE.
  */
 
-#ifndef _FI_UTIL_H_
-#define _FI_UTIL_H_
+#ifndef _OFI_UTIL_H_
+#define _OFI_UTIL_H_
 
 #if HAVE_CONFIG_H
 #  include <config.h>
@@ -52,19 +52,21 @@
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_trigger.h>
 
-#include <fi.h>
+#include <ofi.h>
 #include <ofi_mr.h>
-#include <fi_list.h>
-#include <fi_mem.h>
-#include <fi_rbuf.h>
-#include <fi_signal.h>
-#include <fi_enosys.h>
-#include <fi_osd.h>
-#include <fi_indexer.h>
+#include <ofi_list.h>
+#include <ofi_mem.h>
+#include <ofi_rbuf.h>
+#include <ofi_signal.h>
+#include <ofi_enosys.h>
+#include <ofi_osd.h>
+#include <ofi_indexer.h>
 
 #include "rbtree.h"
 
 #define UTIL_FLAG_ERROR	(1ULL << 60)
+	
+#define OFI_CNTR_ENABLED	(1ULL << 61)
 
 #define OFI_Q_STRERROR(prov, log, q, q_str, entry, strerror)			\
 	FI_WARN(prov, log, "fi_" q_str "_readerr: err: %d, prov_err: %s (%d)\n",\
@@ -350,14 +352,13 @@ struct util_cntr {
 	ofi_cntr_progress_func	progress;
 };
 
-int ofi_check_bind_cntr_flags(struct util_ep *ep, struct util_cntr *cntr,
-			      uint64_t flags);
-
 void ofi_cntr_progress(struct util_cntr *cntr);
 int ofi_cntr_init(const struct fi_provider *prov, struct fid_domain *domain,
 		  struct fi_cntr_attr *attr, struct util_cntr *cntr,
 		  ofi_cntr_progress_func progress, void *context);
 int ofi_cntr_cleanup(struct util_cntr *cntr);
+
+
 /*
  * AV / addressing
  */
@@ -760,4 +761,4 @@ int ofi_ns_del_local_name(struct util_ns *ns, void *service, void *name);
 void *ofi_ns_resolve_name(struct util_ns *ns, const char *server,
 			  void *service);
 
-#endif
+#endif /* _OFI_UTIL_H_ */

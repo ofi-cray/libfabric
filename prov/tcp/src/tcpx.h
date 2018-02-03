@@ -51,13 +51,13 @@
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_trigger.h>
 
-#include <fi.h>
-#include <fi_enosys.h>
-#include <fi_rbuf.h>
-#include <fi_list.h>
-#include <fi_signal.h>
-#include <fi_util.h>
-#include <fi_proto.h>
+#include <ofi.h>
+#include <ofi_enosys.h>
+#include <ofi_rbuf.h>
+#include <ofi_list.h>
+#include <ofi_signal.h>
+#include <ofi_util.h>
+#include <ofi_proto.h>
 
 #ifndef _TCP_H_
 #define _TCP_H_
@@ -115,12 +115,8 @@ void tcpx_conn_mgr_close(struct tcpx_fabric *tcpx_fabric);
 ssize_t tcpx_comm_send(struct tcpx_pe_entry *pe_entry, const void *buf, size_t len);
 ssize_t tcpx_comm_recv(struct tcpx_pe_entry *pe_entry, void *buf, size_t len);
 ssize_t tcpx_comm_flush(struct tcpx_pe_entry *pe_entry);
-
 int tcpx_progress_init(struct tcpx_progress *progress);
 int tcpx_progress_close(struct tcpx_progress *progress);
-void tcpx_progress_signal(struct tcpx_progress *progress);
-int tcpx_progress_ep_add(struct tcpx_progress *progress, struct tcpx_ep *ep);
-int tcpx_progress_ep_remove(struct tcpx_progress *progress, struct tcpx_ep *ep);
 struct tcpx_pe_entry *pe_entry_alloc(struct tcpx_progress *progress);
 void pe_entry_release(struct tcpx_pe_entry *pe_entry);
 void tcpx_progress(struct util_ep *util_ep);
@@ -229,14 +225,9 @@ struct tcpx_pe_entry {
 };
 
 struct tcpx_progress {
-	struct dlist_entry	ep_list;
-	pthread_mutex_t		ep_list_lock;
 	struct util_buf_pool	*pe_entry_pool;
 	struct util_buf_pool	*posted_rx_pool;
 	fastlock_t		posted_rx_pool_lock;
-	struct fd_signal	signal;
-	fastlock_t		signal_lock;
-	fi_epoll_t		epoll_set;
 };
 
 struct tcpx_domain {

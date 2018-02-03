@@ -33,8 +33,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <fi_enosys.h>
-#include <fi_util.h>
+#include <ofi_enosys.h>
+#include <ofi_util.h>
 
 int ofi_ep_bind_cq(struct util_ep *ep, struct util_cq *cq, uint64_t flags)
 {
@@ -96,11 +96,23 @@ int ofi_ep_bind_av(struct util_ep *util_ep, struct util_av *av)
 
 int ofi_ep_bind_cntr(struct util_ep *ep, struct util_cntr *cntr, uint64_t flags)
 {
-	int ret;
+	if (flags & ~(FI_TRANSMIT | FI_RECV | FI_READ  | FI_WRITE |
+		      FI_REMOTE_READ | FI_REMOTE_WRITE)) {
+		FI_WARN(ep->domain->fabric->prov, FI_LOG_EP_CTRL,
+			"Unsupported bind flags\n");
+		return -FI_EBADFLAGS;
+	}
 
-	ret = ofi_check_bind_cntr_flags(ep, cntr, flags);
-	if (ret)
-		return ret;
+	if (((flags & FI_TRANSMIT) && ep->tx_cntr) ||
+	    ((flags & FI_RECV) && ep->rx_cntr) ||
+	    ((flags & FI_READ) && ep->rd_cntr) ||
+	    ((flags & FI_WRITE) && ep->wr_cntr) ||
+	    ((flags & FI_REMOTE_READ) && ep->rem_rd_cntr) ||
+	    ((flags & FI_REMOTE_WRITE) && ep->rem_wr_cntr)) {
+		FI_WARN(ep->domain->fabric->prov, FI_LOG_EP_CTRL,
+			"Duplicate counter binding\n");
+		return -FI_EINVAL;
+	}
 
 	if (flags & FI_TRANSMIT) {
 		ep->tx_cntr = cntr;
@@ -132,8 +144,9 @@ int ofi_ep_bind_cntr(struct util_ep *ep, struct util_cntr *cntr, uint64_t flags)
 		ofi_atomic_inc32(&cntr->ref);
 	}
 
-	return fid_list_insert(&cntr->ep_list,
-			       &cntr->ep_list_lock,
+	ep->flags |= OFI_CNTR_ENABLED;
+
+	return fid_list_insert(&cntr->ep_list, &cntr->ep_list_lock,
 			       &ep->ep_fid.fid);
 }
 
@@ -189,6 +202,7 @@ int ofi_endpoint_init(struct fid_domain *domain, const struct util_prov *util_pr
 	ep->ep_fid.fid.context = context;
 	ep->domain = util_domain;
 	ep->caps = info->caps;
+	ep->flags = 0;
 	ep->progress = progress;
 	ep->tx_op_flags = info->tx_attr->op_flags;
 	ep->rx_op_flags = info->rx_attr->op_flags;

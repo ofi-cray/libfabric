@@ -50,11 +50,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-#include <fi_signal.h>
+#include <ofi_signal.h>
 #include <rdma/providers/fi_prov.h>
 #include <rdma/fi_errno.h>
-#include <fi.h>
-#include <fi_util.h>
+#include <ofi.h>
+#include <ofi_util.h>
 
 struct fi_provider core_prov = {
 	.name = "core",
@@ -91,8 +91,11 @@ uint64_t ofi_tag_format(uint64_t max_tag)
 uint8_t ofi_msb(uint64_t num)
 {
 	uint8_t msb = 0;
-	while (num >> msb)
+
+	while (num) {
 		msb++;
+		num >>= 1;
+	}
 	return msb;
 }
 

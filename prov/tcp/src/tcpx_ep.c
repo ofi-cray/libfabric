@@ -32,8 +32,8 @@
 
 #include <rdma/fi_errno.h>
 #include "rdma/fi_eq.h"
-#include "fi_iov.h"
-#include <prov.h>
+#include "ofi_iov.h"
+#include <ofi_prov.h>
 #include "tcpx.h"
 
 #include <sys/types.h>
@@ -42,7 +42,7 @@
 #include <net/if.h>
 #include <netinet/tcp.h>
 #include <netinet/in.h>
-#include <fi_util.h>
+#include <ofi_util.h>
 #include <unistd.h>
 #include <string.h>
 #include <poll.h>
@@ -176,7 +176,6 @@ static ssize_t tcpx_sendmsg(struct fid_ep *ep, const struct fi_msg *msg,
 	send_entry->done_len = 0;
 
 	dlist_insert_tail(&send_entry->entry, &tcpx_ep->tx_queue);
-	tcpx_progress_signal(&tcpx_domain->progress);
 	return FI_SUCCESS;
 err:
 	pe_entry_release(send_entry);
@@ -396,6 +395,44 @@ static struct fi_ops_cm tcpx_cm_ops = {
 	.join = fi_no_join,
 };
 
+static void tcpx_ep_tx_rx_queues_release(struct tcpx_ep *ep,
+				     struct tcpx_progress *progress)
+{
+	struct dlist_entry *entry;
+	struct tcpx_pe_entry *pe_entry;
+
+	while (!dlist_empty(&ep->tx_queue)) {
+		entry = ep->tx_queue.next;
+		pe_entry = container_of(entry, struct tcpx_pe_entry, entry);
+		dlist_remove(entry);
+		pe_entry_release(pe_entry);
+	}
+
+	while (!dlist_empty(&ep->rx_queue)) {
+		entry = ep->rx_queue.next;
+		pe_entry = container_of(entry, struct tcpx_pe_entry, entry);
+		dlist_remove(entry);
+		pe_entry_release(pe_entry);
+	}
+}
+
+static void tcpx_ep_posted_rx_list_release(struct tcpx_ep *ep,
+				      struct tcpx_progress *progress)
+
+{
+	struct dlist_entry *entry;
+	struct tcpx_posted_rx *posted_rx;
+
+	fastlock_acquire(&ep->posted_rx_list_lock);
+	while (!dlist_empty(&ep->posted_rx_list)) {
+		entry =  ep->posted_rx_list.next;
+		posted_rx = container_of(entry, struct tcpx_posted_rx, entry);
+		dlist_remove(entry);
+		util_buf_release(progress->posted_rx_pool, posted_rx);
+	}
+	fastlock_release(&ep->posted_rx_list_lock);
+}
+
 static int tcpx_ep_close(struct fid *fid)
 {
 	struct tcpx_ep *ep;
@@ -405,7 +442,8 @@ static int tcpx_ep_close(struct fid *fid)
 	tcpx_domain = container_of(ep->util_ep.domain,
 				   struct tcpx_domain, util_domain);
 
-	tcpx_progress_ep_remove(&tcpx_domain->progress, ep);
+	tcpx_ep_posted_rx_list_release(ep, &tcpx_domain->progress);
+	tcpx_ep_tx_rx_queues_release(ep, &tcpx_domain->progress);
 	fastlock_destroy(&ep->posted_rx_list_lock);
 
 	ofi_close_socket(ep->conn_fd);
@@ -445,11 +483,31 @@ static struct fi_ops tcpx_ep_fi_ops = {
 	.control = tcpx_ep_ctrl,
 	.ops_open = fi_no_ops_open,
 };
+static int tcpx_ep_getopt(fid_t fid, int level, int optname,
+			  void *optval, size_t *optlen)
+{
+	if (level != FI_OPT_ENDPOINT)
+		return -ENOPROTOOPT;
+
+	switch (optname) {
+	case FI_OPT_CM_DATA_SIZE:
+		if (*optlen < sizeof(size_t)) {
+			*optlen = sizeof(size_t);
+			return -FI_ETOOSMALL;
+		}
+		*((size_t *) optval) = TCPX_MAX_CM_DATA_SIZE;
+		*optlen = sizeof(size_t);
+		break;
+	default:
+		return -FI_ENOPROTOOPT;
+	}
+	return FI_SUCCESS;
+}
 
 static struct fi_ops_ep tcpx_ep_ops = {
 	.size = sizeof(struct fi_ops_ep),
 	.cancel = fi_no_cancel,
-	.getopt = fi_no_getopt,
+	.getopt = tcpx_ep_getopt,
 	.setopt = fi_no_setopt,
 	.tx_ctx = fi_no_tx_ctx,
 	.rx_ctx = fi_no_rx_ctx,
@@ -615,9 +673,26 @@ static int tcpx_verify_info(uint32_t version, struct fi_info *info)
 	return 0;
 }
 
+static int  tcpx_pep_getopt(fid_t fid, int level, int optname,
+			    void *optval, size_t *optlen)
+{
+	if ( level != FI_OPT_ENDPOINT ||
+	     optname != FI_OPT_CM_DATA_SIZE)
+		return -FI_ENOPROTOOPT;
+
+	if (*optlen < sizeof(size_t)) {
+		*optlen = sizeof(size_t);
+		return -FI_ETOOSMALL;
+	}
+
+	*((size_t *) optval) = TCPX_MAX_CM_DATA_SIZE;
+	*optlen = sizeof(size_t);
+	return FI_SUCCESS;
+}
+
 static struct fi_ops_ep tcpx_pep_ops = {
 	.size = sizeof(struct fi_ops_ep),
-	.getopt = fi_no_getopt,
+	.getopt = tcpx_pep_getopt,
 	.setopt = fi_no_setopt,
 	.tx_ctx = fi_no_tx_ctx,
 	.rx_ctx = fi_no_rx_ctx,

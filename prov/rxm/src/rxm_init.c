@@ -214,21 +214,19 @@ static int rxm_getinfo(uint32_t version, const char *node, const char *service,
 			if (!dup) {
 				fi_freeinfo(*info);
 				return -FI_ENOMEM;
-			}
-			if (FI_VERSION_LT(version, FI_VERSION(1, 5)))
-				dup->mode &= ~FI_LOCAL_MR;
-			else
-				dup->domain_attr->mr_mode &= ~FI_MR_LOCAL;
+			} 
+
+			dup->mode &= ~FI_LOCAL_MR;
+			dup->domain_attr->mr_mode &= ~FI_MR_LOCAL;
+
 			dup->next = cur->next;
 			cur->next = dup;
 			cur = dup;
 		}
 	} else {
 		for (cur = *info; cur; cur = cur->next) {
-			if (FI_VERSION_LT(version, FI_VERSION(1, 5)))
-				cur->mode &= ~FI_LOCAL_MR;
-			else
-				cur->domain_attr->mr_mode &= ~FI_MR_LOCAL;
+			cur->mode &= ~FI_LOCAL_MR;
+			cur->domain_attr->mr_mode &= ~FI_MR_LOCAL;
 		}
 	}
 	return 0;
@@ -243,7 +241,7 @@ static void rxm_fini(void)
 struct fi_provider rxm_prov = {
 	.name = OFI_UTIL_PREFIX "rxm",
 	.version = FI_VERSION(RXM_MAJOR_VERSION, RXM_MINOR_VERSION),
-	.fi_version = FI_VERSION(1, 5),
+	.fi_version = FI_VERSION(1, 6),
 	.getinfo = rxm_getinfo,
 	.fabric = rxm_fabric,
 	.cleanup = rxm_fini

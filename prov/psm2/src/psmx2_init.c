@@ -375,7 +375,6 @@ static int psmx2_getinfo(uint32_t version, const char *node,
 	}
 
 	psmx2_env.num_devunits = cnt;
-	psmx2_init_env();
 
 	psmx2_update_sep_cap();
 	tx_ctx_cnt = psmx2_env.free_trx_ctxt;
@@ -544,14 +543,8 @@ static int psmx2_getinfo(uint32_t version, const char *node,
 
 		if (hints->domain_attr) {
 			switch (hints->domain_attr->av_type) {
-			case FI_AV_MAP:
-				if (psmx2_env.lazy_conn) {
-					FI_INFO(&psmx2_prov, FI_LOG_CORE,
-						"FI_AV_MAP is not supported when lazy connection is enabled.\n");
-					goto err_out;
-				}
-				/* fall through */
 			case FI_AV_UNSPEC:
+			case FI_AV_MAP:
 			case FI_AV_TABLE:
 				av_type = hints->domain_attr->av_type;
 				break;
@@ -741,9 +734,6 @@ static int psmx2_getinfo(uint32_t version, const char *node,
 	psmx2_info->ep_attr->tx_ctx_cnt = tx_ctx_cnt;
 	psmx2_info->ep_attr->rx_ctx_cnt = rx_ctx_cnt;
 
-	if (psmx2_env.lazy_conn)
-		av_type = FI_AV_TABLE;
-
 	psmx2_info->domain_attr->threading = threading;
 	psmx2_info->domain_attr->control_progress = control_progress;
 	psmx2_info->domain_attr->data_progress = data_progress;
@@ -925,6 +915,8 @@ PROVIDER_INI
 			"tag60 means 32/4/60 for data/flags/tag;"
 			"tag64 means 4/28/64 for flags/data/tag (default: tag60).");
 #endif
+
+	psmx2_init_env();
 
 	pthread_mutex_init(&psmx2_lib_mutex, NULL);
 	psmx2_init_count++;

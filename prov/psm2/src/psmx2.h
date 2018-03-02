@@ -487,12 +487,17 @@ struct psmx2_fid_fabric {
 	struct dlist_entry	domain_list;
 };
 
+#define PSMX2_TX	(1)
+#define PSMX2_RX	(2)
+#define PSMX2_TX_RX	(PSMX2_TX | PSMX2_RX)
+
 struct psmx2_trx_ctxt {
 	psm2_ep_t		psm2_ep;
 	psm2_epid_t		psm2_epid;
 	psm2_mq_t		psm2_mq;
 	int			am_initialized;
 	int			id;
+	int			usage_flags;
 	struct psm2_am_parameters psm2_am_param;
 
 	struct psmx2_fid_domain	*domain;
@@ -827,6 +832,8 @@ void	psmx2_alter_prov_info(uint32_t api_version, const struct fi_info *hints,
 			      struct fi_info *info);
 
 void	psmx2_init_tag_layout(struct fi_info *info);
+int	psmx2_get_round_robin_unit(int idx);
+
 int	psmx2_fabric(struct fi_fabric_attr *attr,
 		     struct fid_fabric **fabric, void *context);
 int	psmx2_domain_open(struct fid_fabric *fabric, struct fi_info *info,
@@ -873,11 +880,10 @@ static inline void psmx2_domain_release(struct psmx2_fid_domain *domain)
 
 int	psmx2_domain_enable_ep(struct psmx2_fid_domain *domain, struct psmx2_fid_ep *ep);
 
-void	psmx2_trx_ctxt_free(struct psmx2_trx_ctxt *trx_ctxt);
+void	psmx2_trx_ctxt_free(struct psmx2_trx_ctxt *trx_ctxt, int usage_flags);
 struct	psmx2_trx_ctxt *psmx2_trx_ctxt_alloc(struct psmx2_fid_domain *domain,
 					     struct psmx2_ep_name *src_addr,
-					     int sep_ctxt_idx);
-
+					     int sep_ctxt_idx, int usage_flags);
 
 static inline
 int	psmx2_ns_service_cmp(void *svc1, void *svc2)

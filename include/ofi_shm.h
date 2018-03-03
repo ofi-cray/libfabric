@@ -74,12 +74,15 @@ enum {
 	smr_src_iov,	/* reference iovec via CMA */
 };
 
+#define SMR_REMOTE_CQ_DATA	(1 << 0)
+#define SMR_RMA_REQ		(1 << 1)
+
 /* 
  * Unique smr_op_hdr for smr message protocol:
  * 	addr - local fi_addr of peer sending msg (for shm lookup)
- * 	op - type of op (ex. ofi_op_msg, defined in fi_proto.h)
+ * 	op - type of op (ex. ofi_op_msg, defined in ofi_proto.h)
  * 	op_src - msg src (ex. smr_src_inline, defined above)
- * 	op_flags - operation flags (ex. OFI_REMOTE_CQ_DATA, in fi_proto.h)
+ * 	op_flags - operation flags (ex. SMR_REMOTE_CQ_DATA, defined above)
  * 	src_data - src of additional op data (inject offset / resp offset)
  * 	data - remote CQ data
  */
@@ -244,6 +247,7 @@ int	smr_map_create(const struct fi_provider *prov, int peer_count,
 int	smr_map_to_region(const struct fi_provider *prov,
 			  struct smr_peer *peer_buf);
 void	smr_map_to_endpoint(struct smr_region *region, int index);
+void	smr_unmap_from_endpoint(struct smr_region *region, int index);
 void	smr_exchange_all_peers(struct smr_region *region);
 int	smr_map_add(const struct fi_provider *prov,
 		    struct smr_map *map, const char *name, int id);

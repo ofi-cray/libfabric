@@ -1,5 +1,6 @@
 /*
- * Copyright (c) 2017 Intel Corporation. All rights reserved.
+ * Copyright (c) 2015 Cray Inc. All rights reserved.
+ * Copyright (c) 2018 Intel Corp, Inc.  All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -30,73 +31,56 @@
  * SOFTWARE.
  */
 
+/*
+ * Copied from http://oopweb.com/Algorithms/Documents/Sman/VolumeFrames.html?/Algorithms/Documents/Sman/Volume/RedBlackTrees_files/s_rbt.htm
+ *
+ * Disclosure from the author's main page:
+ * (http://oopweb.com/Algorithms/Documents/Sman/VolumeFrames.html?/Algorithms/Documents/Sman/Volume/RedBlackTrees_files/s_rbt.htm)
+ *
+ *     Source code when part of a software project may be used freely
+ *     without reference to the author.
+ *
+ */
+
+#ifndef _OFI_TREE_H_
+#define _OFI_TREE_H_
+
 #include <stdlib.h>
-#include <string.h>
 
-#include "tcpx.h"
 
-static int tcpx_cq_close(struct fid *fid)
-{
-	int ret;
-	struct util_cq *cq;
-
-	cq = container_of(fid, struct util_cq, cq_fid.fid);
-	ret = ofi_cq_cleanup(cq);
-	if (ret)
-		return ret;
-	free(cq);
-	return 0;
-}
-
-static int tcpx_cq_control(struct fid *fid, int command, void *arg)
-{
-	struct util_cq *cq;
-	int ret;
-
-	cq = container_of(fid, struct util_cq, cq_fid.fid);
-
-	switch(command) {
-	case FI_GETWAIT:
-		if (!cq->wait)
-			return -FI_ENOSYS;
-
-		ret = fi_control(&cq->wait->wait_fid.fid,
-				 command, arg);
-		if (ret)
-			return ret;
-
-		return FI_SUCCESS;
-	default:
-		return -FI_ENOSYS;
-	}
-}
-
-static struct fi_ops tcpx_cq_fi_ops = {
-	.size = sizeof(struct fi_ops),
-	.close = tcpx_cq_close,
-	.bind = fi_no_bind,
-	.control = tcpx_cq_control,
-	.ops_open = fi_no_ops_open,
+enum ofi_node_color {
+	BLACK,
+	RED
 };
 
-int tcpx_cq_open(struct fid_domain *domain, struct fi_cq_attr *attr,
-		 struct fid_cq **cq_fid, void *context)
-{
-	int ret;
-	struct util_cq *cq;
+struct ofi_rbnode {
+	struct ofi_rbnode	*left;
+	struct ofi_rbnode	*right;
+	struct ofi_rbnode	*parent;
+	enum ofi_node_color	color;
+	void			*data;
+};
 
-	cq = calloc(1, sizeof(*cq));
-	if (!cq)
-		return -FI_ENOMEM;
+struct ofi_rbmap {
+	struct ofi_rbnode	*root;
+	struct ofi_rbnode	sentinel;
 
-	ret = ofi_cq_init(&tcpx_prov, domain, attr, cq,
-			   &ofi_cq_progress, context);
-	if (ret) {
-		free(cq);
-		return ret;
-	}
+	/* compare()
+	 *	= 0: a == b
+	 *	< 0: a < b
+	 *	> 0: a > b
+	 */
+	int			(*compare)(struct ofi_rbmap *map,
+					   void *key, void *data);
+};
 
-	*cq_fid = &cq->cq_fid;
-	(*cq_fid)->fid.ops = &tcpx_cq_fi_ops;
-	return 0;
-}
+
+void ofi_rbmap_init(struct ofi_rbmap *map);
+void ofi_rbmap_cleanup(struct ofi_rbmap *map);
+
+struct ofi_rbnode *ofi_rbmap_find(struct ofi_rbmap *map, void *key);
+int ofi_rbmap_insert(struct ofi_rbmap *map, void *key, void *data);
+void ofi_rbmap_delete(struct ofi_rbmap *map, struct ofi_rbnode *node);
+
+
+#endif /* OFI_TREE_H_ */

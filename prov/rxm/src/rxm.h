@@ -60,7 +60,8 @@
 #define RXM_MAJOR_VERSION 1
 #define RXM_MINOR_VERSION 0
 
-#define RXM_BUF_SIZE 16384
+#define RXM_BUF_SIZE	16384
+#define RXM_SAR_LIMIT	262144
 #define RXM_IOV_LIMIT 4
 
 #define RXM_MR_MODES	(OFI_MR_BASIC_MAP | FI_MR_LOCAL)
@@ -160,6 +161,7 @@ struct rxm_rma_iov {
 	FUNC(RXM_TX),		\
 	FUNC(RXM_TX_RMA),	\
 	FUNC(RXM_RX),		\
+	FUNC(RXM_SAR_TX),	\
 	FUNC(RXM_LMT_TX),	\
 	FUNC(RXM_LMT_ACK_WAIT),	\
 	FUNC(RXM_LMT_READ),	\
@@ -354,6 +356,7 @@ struct rxm_ep {
 	int			msg_mr_local;
 	int			rxm_mr_local;
 	size_t			min_multi_recv_size;
+	size_t			sar_limit;
 
 	struct rxm_buf_pool	buf_pools[RXM_BUF_POOL_MAX];
 

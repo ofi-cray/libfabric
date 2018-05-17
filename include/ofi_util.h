@@ -247,6 +247,7 @@ struct util_ep {
 	struct util_cntr	*rem_rd_cntr; /* remote read   */
 	struct util_cntr	*rem_wr_cntr; /* remote write  */
 
+	enum fi_ep_type		type;
 	uint64_t		caps;
 	uint64_t		flags;
 	ofi_ep_progress_func	progress;
@@ -488,6 +489,7 @@ enum util_cmap_state {
 	CMAP_CONNREQ_SENT,
 	CMAP_CONNREQ_RECV,
 	CMAP_ACCEPT,
+	CMAP_CONNECTED_NOTIFY,
 	CMAP_CONNECTED,
 	CMAP_SHUTDOWN,
 };
@@ -526,6 +528,7 @@ struct util_cmap_attr {
 	ofi_cmap_handle_func 		close;
 	ofi_cmap_handle_func 		free;
 	ofi_cmap_connect_func 		connect;
+	ofi_cmap_handle_func		connected_handler;
 	ofi_cmap_event_handler_func	event_handler;
 	ofi_cmap_signal_func		signal;
 };
@@ -555,6 +558,8 @@ int ofi_cmap_get_handle(struct util_cmap *cmap, fi_addr_t fi_addr,
 			struct util_cmap_handle **handle);
 void ofi_cmap_update(struct util_cmap *cmap, const void *addr, fi_addr_t fi_addr);
 
+void ofi_cmap_process_conn_notify(struct util_cmap *cmap,
+				  struct util_cmap_handle *handle);
 void ofi_cmap_process_connect(struct util_cmap *cmap,
 			      struct util_cmap_handle *handle,
 			      uint64_t *remote_key);

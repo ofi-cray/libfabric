@@ -941,6 +941,8 @@ void rxm_ep_handle_postponed_tx_op(struct rxm_ep *rxm_ep,
 				   struct rxm_conn *rxm_conn,
 				   struct rxm_tx_entry *tx_entry)
 {
+	ssize_t ret;
+	struct fi_cq_data_entry comp = { 0 };
 	size_t tx_size = rxm_pkt_size + tx_entry->tx_buf->pkt.hdr.size;
 
 	tx_entry->tx_buf->pkt.ctrl_hdr.conn_id = rxm_conn->handle.remote_key;
@@ -958,11 +960,19 @@ void rxm_ep_handle_postponed_tx_op(struct rxm_ep *rxm_ep,
 			rxm_ep->rxm_info->tx_attr->inject_size) {
 		struct rxm_rma_iov *rma_iov =
 			(struct rxm_rma_iov *)&tx_entry->tx_buf->pkt.data;
-		(void) rxm_ep_lmt_tx_send(rxm_ep, rxm_conn, tx_entry,
-					  rxm_pkt_size + sizeof(*rma_iov) +
-					  sizeof(*rma_iov->iov) * tx_entry->count);
+		ret = rxm_ep_lmt_tx_send(rxm_ep, rxm_conn, tx_entry,
+					 rxm_pkt_size + sizeof(*rma_iov) +
+					 sizeof(*rma_iov->iov) * tx_entry->count);
+		if (OFI_UNLIKELY(ret)) {
+			comp.op_context = tx_entry->context;
+			rxm_cq_write_error(rxm_ep->msg_cq, &comp, ret);
+		}
 	} else {
-		(void) rxm_ep_normal_send(rxm_ep, rxm_conn, tx_entry, tx_size);
+		ret = rxm_ep_normal_send(rxm_ep, rxm_conn, tx_entry, tx_size);
+		if (OFI_UNLIKELY(ret)) {
+			comp.op_context = tx_entry->context;
+			rxm_cq_write_error(rxm_ep->msg_cq, &comp, ret);
+		}
 	}
 }
 
@@ -1019,24 +1029,14 @@ rxm_ep_inject_common(struct rxm_ep *rxm_ep, const void *buf, size_t len,
 	fastlock_acquire(&rxm_ep->util_ep.cmap->lock);
 	handle = ofi_cmap_acquire_handle(rxm_ep->util_ep.cmap, dest_addr);
 	if (OFI_UNLIKELY(!handle || handle->state != CMAP_CONNECTED)) {
-		if (OFI_UNLIKELY(!handle)) {
-			FI_DBG(&rxm_prov, FI_LOG_EP_CTRL,
-			       "No handle found for given fi_addr\n");
-			ret = util_cmap_alloc_handle(rxm_ep->util_ep.cmap,
-						     dest_addr, CMAP_IDLE,
-						     &handle);
-			if (OFI_UNLIKELY(ret)) {
-				fastlock_release(&rxm_ep->util_ep.cmap->lock);
-				return -FI_EAGAIN;
-			}
-		}
 		struct iovec iov = {
 			.iov_base = (void *)buf,
 			.iov_len = len,
 		};
-		ret = ofi_cmap_handle_connect(rxm_ep->util_ep.cmap,
-					      dest_addr, handle);
-		if (OFI_UNLIKELY(ret != -FI_EAGAIN))
+		ret = rxm_ep_handle_unconnected(rxm_ep, &handle, dest_addr);
+		if (!ret)
+			goto inject_continue;
+		else if (OFI_UNLIKELY(ret != -FI_EAGAIN))
 			goto cmap_err;
 		rxm_conn = container_of(handle, struct rxm_conn, handle);
 		ret = rxm_ep_postpone_send(rxm_ep, rxm_conn, NULL, 1,
@@ -1046,6 +1046,7 @@ cmap_err:
 		fastlock_release(&rxm_ep->util_ep.cmap->lock);
 		return ret;
 	}
+inject_continue:
 	fastlock_release(&rxm_ep->util_ep.cmap->lock);
 	rxm_conn = container_of(handle, struct rxm_conn, handle);
 
@@ -1093,20 +1094,10 @@ rxm_ep_send_common(struct rxm_ep *rxm_ep, const struct iovec *iov, void **desc,
 	fastlock_acquire(&rxm_ep->util_ep.cmap->lock);
 	handle = ofi_cmap_acquire_handle(rxm_ep->util_ep.cmap, dest_addr);
 	if (OFI_UNLIKELY(!handle || handle->state != CMAP_CONNECTED)) {
-		if (OFI_UNLIKELY(!handle)) {
-			FI_DBG(&rxm_prov, FI_LOG_EP_CTRL,
-			       "No handle found for given fi_addr\n");
-			ret = util_cmap_alloc_handle(rxm_ep->util_ep.cmap,
-						     dest_addr, CMAP_IDLE,
-						     &handle);
-			if (OFI_UNLIKELY(ret)) {
-				fastlock_release(&rxm_ep->util_ep.cmap->lock);
-				return -FI_EAGAIN;
-			}
-		}
-		ret = ofi_cmap_handle_connect(rxm_ep->util_ep.cmap,
-					      dest_addr, handle);
-		if (OFI_UNLIKELY(ret != -FI_EAGAIN))
+		ret = rxm_ep_handle_unconnected(rxm_ep, &handle, dest_addr);
+		if (!ret)
+			goto send_continue;
+		else if (OFI_UNLIKELY(ret != -FI_EAGAIN))
 			goto cmap_err;
 		rxm_conn = container_of(handle, struct rxm_conn, handle);
 		ret = rxm_ep_postpone_send(
@@ -1120,6 +1111,7 @@ cmap_err:
 		fastlock_release(&rxm_ep->util_ep.cmap->lock);
 		return ret;
 	}
+send_continue:
 	fastlock_release(&rxm_ep->util_ep.cmap->lock);
 	rxm_conn = container_of(handle, struct rxm_conn, handle);
 

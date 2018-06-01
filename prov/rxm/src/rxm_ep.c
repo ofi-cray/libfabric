@@ -200,12 +200,13 @@ static void rxm_buf_pool_destroy(struct rxm_buf_pool *pool)
 	util_buf_pool_destroy(pool->pool);
 }
 
-static void rxm_ep_cleanup_post_rx_list(struct rxm_ep *rxm_ep)
+void rxm_ep_cleanup_posted_rx_list(struct rxm_ep *rxm_ep,
+				   struct dlist_entry *posted_rx_list)
 {
 	struct rxm_rx_buf *rx_buf;
-	while (!dlist_empty(&rxm_ep->post_rx_list)) {
-		dlist_pop_front(&rxm_ep->post_rx_list, struct rxm_rx_buf,
-				rx_buf, entry);
+
+	while (!dlist_empty(posted_rx_list)) {
+		dlist_pop_front(posted_rx_list, struct rxm_rx_buf, rx_buf, entry);
 		rxm_rx_buf_release(rxm_ep, rx_buf);
 	}
 }
@@ -327,7 +328,7 @@ static int rxm_ep_txrx_pool_create(struct rxm_ep *rxm_ep)
 				  RXM_BUF_POOL_RX);
 	if (ret)
 		return ret;
-	dlist_init(&rxm_ep->post_rx_list);
+	dlist_init(&rxm_ep->posted_srx_list);
 	dlist_init(&rxm_ep->repost_ready_list);
 
 	/* Allocates resources for TX pools */
@@ -451,7 +452,7 @@ static void rxm_ep_txrx_res_close(struct rxm_ep *rxm_ep)
 {
 	rxm_ep_txrx_queue_close(rxm_ep);
 
-	rxm_ep_cleanup_post_rx_list(rxm_ep);
+	rxm_ep_cleanup_posted_rx_list(rxm_ep, &rxm_ep->posted_srx_list);
 	rxm_ep_txrx_pool_destroy(rxm_ep);
 }
 
@@ -1171,9 +1172,6 @@ send_continue:
 	}
 }
 
-#define rxm_ep_tx_flags_inject(rxm_ep) \
-	((rxm_ep_tx_flags(rxm_ep) & ~FI_COMPLETION) | FI_INJECT)
-
 static ssize_t rxm_ep_sendmsg(struct fid_ep *ep_fid, const struct fi_msg *msg,
 			      uint64_t flags)
 {
@@ -1222,8 +1220,8 @@ static ssize_t rxm_ep_inject(struct fid_ep *ep_fid, const void *buf, size_t len,
 					     util_ep.ep_fid.fid);
 
 	return rxm_ep_inject_common(rxm_ep, buf, len, dest_addr, 0,
-				    rxm_ep_tx_flags_inject(rxm_ep),
-				    0, FI_MSG, &rxm_ep->buf_pools[RXM_BUF_POOL_TX_MSG]);
+				    rxm_ep->util_ep.inject_op_flags, 0, FI_MSG,
+				    &rxm_ep->buf_pools[RXM_BUF_POOL_TX_MSG]);
 }
 
 static ssize_t rxm_ep_senddata(struct fid_ep *ep_fid, const void *buf, size_t len,
@@ -1250,7 +1248,7 @@ static ssize_t rxm_ep_injectdata(struct fid_ep *ep_fid, const void *buf, size_t 
 					     util_ep.ep_fid.fid);
 
 	return rxm_ep_inject_common(rxm_ep, buf, len, dest_addr, data,
-				    rxm_ep_tx_flags_inject(rxm_ep) | FI_REMOTE_CQ_DATA,
+				    rxm_ep->util_ep.inject_op_flags | FI_REMOTE_CQ_DATA,
 				    0, FI_MSG, &rxm_ep->buf_pools[RXM_BUF_POOL_TX_MSG]);
 }
 
@@ -1358,7 +1356,7 @@ static ssize_t rxm_ep_tinject(struct fid_ep *ep_fid, const void *buf, size_t len
 					     util_ep.ep_fid.fid);
 
 	return rxm_ep_inject_common(rxm_ep, buf, len, dest_addr, 0,
-				    rxm_ep_tx_flags_inject(rxm_ep), tag, FI_TAGGED,
+				    rxm_ep->util_ep.inject_op_flags, tag, FI_TAGGED,
 				    &rxm_ep->buf_pools[RXM_BUF_POOL_TX_TAGGED]);
 }
 
@@ -1387,9 +1385,8 @@ static ssize_t rxm_ep_tinjectdata(struct fid_ep *ep_fid, const void *buf, size_t
 					     util_ep.ep_fid.fid);
 
 	return rxm_ep_inject_common(rxm_ep, buf, len, dest_addr, data,
-				    rxm_ep_tx_flags_inject(rxm_ep) | FI_REMOTE_CQ_DATA,
-				    tag, FI_TAGGED,
-				    &rxm_ep->buf_pools[RXM_BUF_POOL_TX_TAGGED]);
+				    rxm_ep->util_ep.inject_op_flags | FI_REMOTE_CQ_DATA,
+				    tag, FI_TAGGED, &rxm_ep->buf_pools[RXM_BUF_POOL_TX_TAGGED]);
 }
 
 struct fi_ops_tagged rxm_ops_tagged = {
@@ -1675,7 +1672,8 @@ static int rxm_ep_ctrl(struct fid *fid, int command, void *arg)
 			return -FI_ENOMEM;
 
 		if (rxm_ep->srx_ctx) {
-			ret = rxm_ep_prepost_buf(rxm_ep, rxm_ep->srx_ctx);
+			ret = rxm_ep_prepost_buf(rxm_ep, rxm_ep->srx_ctx,
+						 &rxm_ep->posted_srx_list);
 			if (ret) {
 				ofi_cmap_free(rxm_ep->util_ep.cmap);
 				FI_WARN(&rxm_prov, FI_LOG_EP_CTRL,

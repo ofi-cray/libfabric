@@ -255,8 +255,8 @@ static int rxm_recv_queue_init(struct rxm_ep *rxm_ep,  struct rxm_recv_queue *re
 			recv_queue->match_unexp = rxm_match_noop;
 		}
 		for (i = recv_queue->fs->size - 1; i >= 0; i--) {
-			recv_queue->fs->buf[i].comp_flags = FI_MSG | FI_RECV;
-			recv_queue->fs->buf[i].recv_queue = recv_queue;
+			recv_queue->fs->entry[i].buf.comp_flags = FI_MSG | FI_RECV;
+			recv_queue->fs->entry[i].buf.recv_queue = recv_queue;
 		}
 	} else {
 		if (rxm_ep->rxm_info->caps & FI_DIRECTED_RECV) {
@@ -267,8 +267,8 @@ static int rxm_recv_queue_init(struct rxm_ep *rxm_ep,  struct rxm_recv_queue *re
 			recv_queue->match_unexp = rxm_match_unexp_msg_tag;
 		}
 		for (i = recv_queue->fs->size - 1; i >= 0; i--) {
-			recv_queue->fs->buf[i].comp_flags = FI_TAGGED | FI_RECV;
-			recv_queue->fs->buf[i].recv_queue = recv_queue;
+			recv_queue->fs->entry[i].buf.comp_flags = FI_TAGGED | FI_RECV;
+			recv_queue->fs->entry[i].buf.recv_queue = recv_queue;
 		}
 	}
 	fastlock_init(&recv_queue->lock);
@@ -1499,9 +1499,7 @@ static int rxm_ep_msg_cq_open(struct rxm_ep *rxm_ep, enum fi_wait_obj wait_obj)
 
 	return 0;
 err:
-	ret = fi_close(&rxm_ep->msg_cq->fid);
-	if (ret)
-		FI_WARN(&rxm_prov, FI_LOG_EP_CTRL, "Unable to close msg CQ\n");
+	fi_close(&rxm_ep->msg_cq->fid);
 	return ret;
 }
 

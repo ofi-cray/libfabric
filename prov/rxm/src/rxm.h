@@ -668,7 +668,7 @@ rxm_tx_buf_release(struct rxm_ep *rxm_ep, struct rxm_tx_buf *tx_buf)
 	       (tx_buf->pkt.ctrl_hdr.type == ofi_ctrl_large_data) ||
 	       (tx_buf->pkt.ctrl_hdr.type == ofi_ctrl_seg_data) ||
 	       (tx_buf->pkt.ctrl_hdr.type == ofi_ctrl_ack));
-	tx_buf->pkt.hdr.flags &= ~FI_REMOTE_CQ_DATA;
+	tx_buf->pkt.hdr.flags = 0;
 	rxm_buf_release(&rxm_ep->buf_pools[tx_buf->type],
 			(struct rxm_buf *)tx_buf);
 }
@@ -741,6 +741,18 @@ rxm_ ## type ## _entry_release(struct rxm_ ## queue_type ## _queue *queue,	\
 
 RXM_DEFINE_QUEUE_ENTRY(tx, send);
 RXM_DEFINE_QUEUE_ENTRY(recv, recv);
+
+static inline void
+rxm_fill_tx_entry(void *context, uint8_t count, uint64_t flags,
+		  uint64_t comp_flags, struct rxm_tx_buf *tx_buf,
+		  struct rxm_tx_entry *tx_entry)
+{
+	tx_entry->context = context;
+	tx_entry->count = count;
+	tx_entry->flags = flags;
+	tx_entry->tx_buf = tx_buf;
+	tx_entry->comp_flags = comp_flags | FI_SEND;
+}
 
 static inline int rxm_finish_send_nobuf(struct rxm_tx_entry *tx_entry)
 {

@@ -68,14 +68,14 @@
 /* Define to 1 if you have the <rdma/rsocket.h> header file. */
 /* #undef HAVE_RDMA_RSOCKET_H */
 
-/* sockets provider is built */
-#define HAVE_SOCKETS 1
-
 /* UDP provider is built */
 #define HAVE_UDP 1
 
-/* TCP provider is built */
-#define HAVE_TCP 1
+/* UDP provider is built as DSO */
+/* #undef HAVE_UDP_DL */
+
+/* sockets provider is built */
+#define HAVE_SOCKETS 1
 
 /* sockets provider is built as DSO */
 /* #undef HAVE_SOCKETS_DL */
@@ -159,7 +159,7 @@
 #define PACKAGE_NAME "libfabric"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "libfabric 1.2.0"
+#define PACKAGE_STRING "libfabric 1.6.1a1"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "libfabric"
@@ -168,7 +168,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "1.2.0"
+#define PACKAGE_VERSION "1.6.1a1"
 
 /* Define to 1 if pthread_spin_init is available. */
 /* #undef PT_LOCK_SPIN */

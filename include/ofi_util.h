@@ -382,6 +382,7 @@ int ofi_check_bind_cq_flags(struct util_ep *ep, struct util_cq *cq,
 			    uint64_t flags);
 void ofi_cq_progress(struct util_cq *cq);
 int ofi_cq_cleanup(struct util_cq *cq);
+int ofi_cq_control(struct fid *fid, int command, void *arg);
 ssize_t ofi_cq_read(struct fid_cq *cq_fid, void *buf, size_t count);
 ssize_t ofi_cq_readfrom(struct fid_cq *cq_fid, void *buf, size_t count,
 		fi_addr_t *src_addr);
@@ -553,7 +554,10 @@ struct util_av_attr {
 int ofi_av_init(struct util_domain *domain,
 	       const struct fi_av_attr *attr, const struct util_av_attr *util_attr,
 	       struct util_av *av, void *context);
+int ofi_av_init_lightweight(struct util_domain *domain, const struct fi_av_attr *attr,
+			    struct util_av *av, void *context);
 int ofi_av_close(struct util_av *av);
+int ofi_av_close_lightweight(struct util_av *av);
 
 int ofi_av_insert_addr(struct util_av *av, const void *addr, int slot, int *index);
 int ofi_av_remove_addr(struct util_av *av, int slot, int index);

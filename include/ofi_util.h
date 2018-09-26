@@ -256,6 +256,8 @@ struct util_ep {
 	ofi_ep_progress_func	progress;
 	struct util_cmap	*cmap;
 	fastlock_t		lock;
+	ofi_fastlock_acquire_t	lock_acquire;
+	ofi_fastlock_release_t	lock_release;
 };
 
 int ofi_ep_bind_av(struct util_ep *util_ep, struct util_av *av);
@@ -268,6 +270,16 @@ int ofi_endpoint_init(struct fid_domain *domain, const struct util_prov *util_pr
 		      ofi_ep_progress_func progress);
 
 int ofi_endpoint_close(struct util_ep *util_ep);
+
+static inline void ofi_ep_lock_acquire(struct util_ep *ep)
+{
+	ep->lock_acquire(&ep->lock);
+}
+
+static inline void ofi_ep_lock_release(struct util_ep *ep)
+{
+	ep->lock_release(&ep->lock);
+}
 
 /*
  * Tag and address match
@@ -759,6 +771,12 @@ int ofi_eq_create(struct fid_fabric *fabric, struct fi_eq_attr *attr,
 void ofi_eq_handle_err_entry(uint32_t api_version,
 			     struct fi_eq_err_entry *err_entry,
 			     struct fi_eq_err_entry *user_err_entry);
+ssize_t ofi_eq_read(struct fid_eq *eq_fid, uint32_t *event,
+		    void *buf, size_t len, uint64_t flags);
+ssize_t ofi_eq_write(struct fid_eq *eq_fid, uint32_t event,
+		     const void *buf, size_t len, uint64_t flags);
+const char *ofi_eq_strerror(struct fid_eq *eq_fid, int prov_errno,
+			    const void *err_data, char *buf, size_t len);
 
 /*
 

@@ -146,10 +146,13 @@ struct rxm_cm_data {
 	struct rxm_ep_wire_proto proto;
 };
 
-struct rxm_rma_iov {
+struct rxm_rndv_hdr {
+	struct ofi_rma_iov iov[RXM_IOV_LIMIT];
 	uint8_t count;
-	struct ofi_rma_iov iov[];
 };
+
+#define rxm_pkt_rndv_data(rxm_pkt) \
+	((rxm_pkt)->data + sizeof(struct rxm_rndv_hdr))
 
 /*
  * Macros to generate enums and associated string values
@@ -297,8 +300,8 @@ struct rxm_rx_buf {
 	uint8_t repost;
 
 	/* Used for large messages */
-	struct rxm_rma_iov *rma_iov;
-	size_t rma_iov_index;
+	struct rxm_rndv_hdr *rndv_hdr;
+	size_t rndv_rma_index;
 	struct fid_mr *mr[RXM_IOV_LIMIT];
 
 	/* Must stay at bottom */
@@ -383,7 +386,10 @@ struct rxm_recv_entry {
 	uint64_t comp_flags;
 	size_t total_len;
 	struct rxm_recv_queue *recv_queue;
-	void *multi_recv_buf;
+	struct {
+		void	*buf;
+		size_t	len;
+	} multi_recv;
 
 	union {
 		/* Used for SAR protocol */
@@ -469,6 +475,8 @@ struct rxm_ep {
 	int			msg_mr_local;
 	int			rxm_mr_local;
 	size_t			min_multi_recv_size;
+	size_t			buffered_min;
+	size_t			buffered_limit;
 
 	struct {
 		size_t		limit;
@@ -610,8 +618,7 @@ rxm_ep_msg_mr_regv_lim(struct rxm_ep *rxm_ep, const struct iovec *iov, size_t co
 		container_of(rxm_ep->util_ep.domain, struct rxm_domain, util_domain);
  
 	for (i = 0; i < count && total_reg_len; i++) {
-		size_t len = iov[i].iov_len <= total_reg_len ?
-			     iov[i].iov_len : total_reg_len;
+		size_t len = MIN(iov[i].iov_len, total_reg_len);
 		ret = fi_mr_reg(rxm_domain->msg_domain, iov[i].iov_base,
 				len, access, 0, 0, 0, &mr[i], NULL);
 		if (ret)
@@ -684,6 +691,10 @@ rxm_process_recv_entry(struct rxm_recv_queue *recv_queue,
 	rx_buf = rxm_check_unexp_msg_list(recv_queue, recv_entry->addr,
 					  recv_entry->tag, recv_entry->ignore);
 	if (rx_buf) {
+		assert((recv_queue->type == RXM_RECV_QUEUE_MSG &&
+			rx_buf->pkt.hdr.op == ofi_op_msg) ||
+		       (recv_queue->type == RXM_RECV_QUEUE_TAGGED &&
+			rx_buf->pkt.hdr.op == ofi_op_tagged));
 		dlist_remove(&rx_buf->unexp_msg.entry);
 		rx_buf->recv_entry = recv_entry;
 		recv_queue->rxm_ep->res_fastlock_release(&recv_queue->lock);
@@ -987,6 +998,20 @@ static inline int rxm_cq_write_recv_comp(struct rxm_rx_buf *rx_buf,
 		return ofi_cq_write(rx_buf->ep->util_ep.rx_cq, context,
 				    flags, len, buf, rx_buf->pkt.hdr.data,
 				    rx_buf->pkt.hdr.tag);
+}
+
+static inline int
+rxm_cq_write_multi_recv_comp(struct rxm_ep *rxm_ep, struct rxm_recv_entry *recv_entry)
+{
+	if (rxm_ep->rxm_info->caps & FI_SOURCE)
+		return ofi_cq_write_src(rxm_ep->util_ep.rx_cq, recv_entry->context,
+					FI_MULTI_RECV, recv_entry->multi_recv.len,
+					recv_entry->multi_recv.buf, 0, 0,
+					recv_entry->addr);
+	else
+		return ofi_cq_write(rxm_ep->util_ep.rx_cq, recv_entry->context,
+				    FI_MULTI_RECV, recv_entry->multi_recv.len,
+				    recv_entry->multi_recv.buf, 0, 0);
 }
 
 static inline void rxm_enqueue_rx_buf_for_repost(struct rxm_rx_buf *rx_buf)

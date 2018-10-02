@@ -83,6 +83,8 @@ extern "C" {
 
 #define ofi_div_ceil(a, b) ((a + b - 1) / b)
 
+#define OFI_MAGIC_64 (0x0F1C0DE0F1C0DE64)
+
 
 /*
  * CPU specific features
@@ -116,6 +118,9 @@ extern struct fi_provider core_prov;
 void ofi_create_filter(struct fi_filter *filter, const char *env_name);
 void ofi_free_filter(struct fi_filter *filter);
 int ofi_apply_filter(struct fi_filter *filter, const char *name);
+
+int ofi_nic_close(struct fid *fid);
+struct fid_nic *ofi_nic_dup(const struct fid_nic *nic);
 
 void fi_log_init(void);
 void fi_log_fini(void);

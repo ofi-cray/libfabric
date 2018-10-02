@@ -63,6 +63,17 @@ static inline void *mem_dup(const void *src, size_t size)
 	return dest;
 }
 
+static inline int ofi_str_dup(const char *src, char **dst)
+{
+	if (src) {
+		*dst = strdup(src);
+		if (!*dst)
+			return -FI_ENOMEM;
+	} else {
+		*dst = NULL;
+	}
+	return 0;
+}
 
 /*
  * Buffer pool (free stack) template
@@ -249,6 +260,7 @@ struct util_buf_pool;
 typedef int (*util_buf_region_alloc_hndlr) (void *pool_ctx, void *addr, size_t len,
 					    void **context);
 typedef void (*util_buf_region_free_hndlr) (void *pool_ctx, void *context);
+typedef void (*util_buf_region_init_func) (void *pool_ctx, void *buf);
 
 struct util_buf_attr {
 	size_t 				size;
@@ -257,6 +269,7 @@ struct util_buf_attr {
 	size_t 				chunk_cnt;
 	util_buf_region_alloc_hndlr 	alloc_hndlr;
 	util_buf_region_free_hndlr 	free_hndlr;
+	util_buf_region_init_func 	init;
 	void 				*ctx;
 	uint8_t				track_used;
 };

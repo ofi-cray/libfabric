@@ -59,8 +59,8 @@
 
 #define MRAIL_MAX_INFO 100
 
-#define MRAIL_PASSTHROUGH_MODES		0
-#define MRAIL_PASSTHROUGH_MR_MODES	(FI_MR_LOCAL | OFI_MR_BASIC_MAP)
+#define MRAIL_PASSTHRU_MODES 	(0ULL)
+#define MRAIL_PASSTHRU_MR_MODES	(OFI_MR_BASIC_MAP)
 
 #define MRAIL_RAIL_CQ_FORMAT	FI_CQ_FORMAT_TAGGED
 
@@ -180,7 +180,6 @@ struct mrail_av {
 	struct fid_av **avs;
 	size_t *rail_addrlen;
 	size_t num_avs;
-	ofi_atomic32_t index;
 };
 
 struct mrail_peer_info {

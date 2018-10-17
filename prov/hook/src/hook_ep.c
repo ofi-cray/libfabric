@@ -32,7 +32,7 @@
 
 #include <stdlib.h>
 #include <ofi_enosys.h>
-#include "hook.h"
+#include "ofi_hook.h"
 #include "hook_perf.h"
 
 
@@ -87,7 +87,7 @@ static struct fi_ops_ep hook_ep_ops = {
 };
 
 
-static void hook_setup_ep(enum hook_class hclass, struct fid_ep *ep,
+static void hook_setup_ep(enum ofi_hook_class hclass, struct fid_ep *ep,
 			  int fclass, void *context)
 {
 	ep->fid.fclass = fclass;

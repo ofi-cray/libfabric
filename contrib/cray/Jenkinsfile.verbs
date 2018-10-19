@@ -42,6 +42,9 @@ pipeline {
             }
         }
         stage('Build') {
+            when { 
+                expression { 0 == 1 }
+            }
             options {
                 timeout (time: 5, unit: 'MINUTES')
             }
@@ -55,6 +58,9 @@ pipeline {
             }
         }
         stage('Test') {
+            when {
+                expression { 0 == 1}
+            }
             environment {
                 LD_LIBRARY_PATH = "$LIBFABRIC_INSTALL/lib:$LD_LIBRARY_PATH"
                 MPIR_CVAR_OFI_USE_PROVIDER = 'verbs;ofi_rxm'
@@ -222,7 +228,8 @@ pipeline {
                     expression { currentBuild.result == 'SUCCESS' } ;
                     anyOf {
                         expression { env.BRANCH_NAME == 'master' } ;
-                        buildingTag()
+                        buildingTag() ;
+                        expression { env.BRANCH_NAME == env.BRANCH_NAME }
                     }
                 }
             }
@@ -242,14 +249,23 @@ pipeline {
                         sh "make install"
                     }
                 }
-                stage("Create stable link") {
-                    when {
-                        expression { env.BRANCH_NAME == 'master' }
-                    }
+                stage("Create nightly link") {
+//                    when {
+//                        expression { env.BRANCH_NAME == 'master' }
+//                    }
                     steps {
-                        script {
-                            publish env.LIBFABRIC_BUILD_PATH, "stable", "$GIT_SHORT_COMMIT"
-                        }
+                        sh """
+                            #!/bin/bash 
+
+                            TAG=\$LIBFABRIC_BUILD_PATH/tags/nightly
+                            if [[ -e \$TAG ]] ; then
+                                rm $TAG
+                            fi 
+
+                            pushd \$LIBFABRIC_BUILD_PATH/tags
+                            ln -s ../\$GIT_SHORT_COMMIT nightly
+                            popd
+                        """    
                     }
                 }
                 stage("Create tagged link") {
@@ -257,9 +273,18 @@ pipeline {
                         buildingTag()
                     }
                     steps {
-                        script {
-                            publish env.LIBFABRIC_BUILD_PATH, "$BRANCH_NAME", "$GIT_SHORT_COMMIT"
-                        }
+                        sh """
+                            #!/bin/bash 
+
+                            TAG=\$LIBFABRIC_BUILD_PATH/tags/\$BRANCH_NAME
+                            if [[ -e \$TAG ]] ; then
+                                rm $TAG
+                            fi 
+
+                            pushd \$LIBFABRIC_BUILD_PATH/tags
+                            ln -s ../\$GIT_SHORT_COMMIT \$BRANCH_NAME
+                            popd
+                        """    
                     }
                 }
                 stage("Create RPMs") {

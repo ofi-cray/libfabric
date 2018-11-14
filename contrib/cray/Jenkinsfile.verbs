@@ -6,6 +6,7 @@
 //   -- launch
 //   -- publish
 @Library('CrayNetworkCI@master') _
+@Library('dst-shared@master') _
 
 pipeline {
     options {
@@ -298,6 +299,14 @@ pipeline {
                 }
             }
         }
+	stage('Publish') {
+	    when {
+		expression { env.BRANCH_NAME == 'feature/dst-integration' } 
+	    }
+	    steps {
+                transfer(artifactName: 'rpmbuild/RPMS/libfabric-*tar.bz2')
+	    }
+	}
     }
     post {
         success {

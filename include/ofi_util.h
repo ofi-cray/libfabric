@@ -72,31 +72,6 @@
 
 #define OFI_CNTR_ENABLED	(1ULL << 61)
 
-#define OFI_Q_STRERROR(prov, log, q, q_str, entry, strerror)					\
-	FI_WARN(prov, log, "fi_" q_str "_readerr: err: %d, prov_err: %s (%d)\n",		\
-		(entry).err,strerror((q), (entry).prov_errno, (entry).err_data, NULL, 0),	\
-		(entry).prov_errno)
-
-#define OFI_Q_READERR(prov, log, q, q_str, readerr, strerror, ret, err_entry)	\
-	do {									\
-		(ret) = readerr((q), &(err_entry), 0);				\
-		if ((ret) != sizeof(err_entry)) {				\
-			FI_WARN(prov, log,					\
-				"Unable to fi_" q_str "_readerr\n");		\
-		} else {							\
-			OFI_Q_STRERROR(prov, log, q, q_str,			\
-				       err_entry, strerror);			\
-		}								\
-	} while (0)
-
-#define OFI_CQ_READERR(prov, log, cq, ret, err_entry)		\
-	OFI_Q_READERR(prov, log, cq, "cq", fi_cq_readerr,	\
-		      fi_cq_strerror, ret, err_entry)
-
-#define OFI_EQ_READERR(prov, log, eq, ret, err_entry)		\
-	OFI_Q_READERR(prov, log, eq, "eq", fi_eq_readerr, 	\
-		      fi_eq_strerror, ret, err_entry)
-
 #define FI_INFO_FIELD(provider, prov_attr, user_attr, prov_str, user_str, type)	\
 	do {										\
 		FI_INFO(provider, FI_LOG_CORE, prov_str ": %s\n",			\
@@ -526,10 +501,9 @@ ofi_cq_write(struct util_cq *cq, void *context, uint64_t flags, size_t len,
 }
 
 static inline int
-ofi_cq_write_src(struct util_cq *cq, void *context, uint64_t flags, size_t len,
-		 void *buf, uint64_t data, uint64_t tag, fi_addr_t src)
+ofi_cq_write_src_thread_unsafe(struct util_cq *cq, void *context, uint64_t flags, size_t len,
+			       void *buf, uint64_t data, uint64_t tag, fi_addr_t src)
 {
-	cq->cq_fastlock_acquire(&cq->cq_lock);
 	if (OFI_UNLIKELY(ofi_cirque_isfull(cq->cirq))) {
 		FI_DBG(cq->domain->prov, FI_LOG_CQ,
 		       "util_cq cirq is full!\n");
@@ -538,8 +512,19 @@ ofi_cq_write_src(struct util_cq *cq, void *context, uint64_t flags, size_t len,
 	}
 	cq->src[ofi_cirque_windex(cq->cirq)] = src;
 	ofi_cq_write_comp_entry(cq, context, flags, len, buf, data, tag);
-	cq->cq_fastlock_release(&cq->cq_lock);
 	return 0;
+}
+
+static inline int
+ofi_cq_write_src(struct util_cq *cq, void *context, uint64_t flags, size_t len,
+		 void *buf, uint64_t data, uint64_t tag, fi_addr_t src)
+{
+	int ret;
+	cq->cq_fastlock_acquire(&cq->cq_lock);
+	ret = ofi_cq_write_src_thread_unsafe(cq, context, flags, len,
+					     buf, data, tag, src);
+	cq->cq_fastlock_release(&cq->cq_lock);
+	return ret;
 }
 
 int ofi_cq_write_error(struct util_cq *cq,

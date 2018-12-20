@@ -4,7 +4,7 @@ dnl
 dnl Process this file with autoconf to produce a configure script.
 
 AC_PREREQ([2.60])
-AC_INIT([libfabric], [1.7.0rc1], [ofiwg@lists.openfabrics.org])
+AC_INIT([libfabric], [1.7.0rc2], [ofiwg@lists.openfabrics.org])
 AC_CONFIG_SRCDIR([src/fabric.c])
 AC_CONFIG_AUX_DIR(config)
 AC_CONFIG_MACRO_DIR(config)
@@ -235,6 +235,31 @@ AC_TRY_LINK([#include <stdint.h>],
     [
 	AC_MSG_RESULT(yes)
         AC_DEFINE(HAVE_BUILTIN_ATOMICS, 1, [Set to 1 to use built-in intrincics atomics])
+    ],
+    [AC_MSG_RESULT(no)])
+
+dnl Check for gcc memory model aware built-in atomics
+dnl If supported check to see if not internal to compiler
+AC_MSG_CHECKING(compiler support for built-in memory model aware atomics)
+AC_TRY_LINK([#include <stdint.h>],
+    [uint64_t d;
+     uint64_t s;
+     uint64_t c;
+     uint64_t r;
+      r = __atomic_fetch_add(&d, s, __ATOMIC_SEQ_CST);
+      __atomic_load(&d, &r, __ATOMIC_SEQ_CST);
+      __atomic_exchange(&d, &s, &r, __ATOMIC_SEQ_CST);
+      __atomic_compare_exchange(&d,&c,&s,0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+     #if defined(__PPC__) && !defined(__PPC64__)
+       #error compiler built-in memory model aware atomics are not supported on PowerPC 32-bit
+     #else
+       return 0;
+     #endif
+    ],
+    [
+        AC_MSG_RESULT(yes)
+        AC_SEARCH_LIBS([__atomic_load_8], [atomic])
+        AC_DEFINE(HAVE_BUILTIN_MM_ATOMICS, 1, [Set to 1 to use built-in intrinsics memory model aware atomics])
     ],
     [AC_MSG_RESULT(no)])
 

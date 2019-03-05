@@ -76,6 +76,8 @@ int mrail_get_core_info(uint32_t version, const char *node, const char *service,
 	struct fi_info *core_hints, *info, *fi = NULL;
 	size_t i;
 	int ret = 0;
+	uint64_t removed_mode;
+	uint64_t removed_mr_mode;
 
 	if (!mrail_addr_strv) {
 		FI_WARN(&mrail_prov, FI_LOG_FABRIC,
@@ -92,6 +94,25 @@ int mrail_get_core_info(uint32_t version, const char *node, const char *service,
 		assert(core_hints->domain_attr);
 		core_hints->domain_attr->mr_mode = MRAIL_PASSTHRU_MR_MODES;
 	} else {
+		removed_mode = core_hints->mode & ~MRAIL_PASSTHRU_MODES;
+		if (removed_mode) {
+			FI_INFO(&mrail_prov, FI_LOG_CORE,
+				"Unable to pass through given modes: %s\n",
+				fi_tostr(&removed_mode, FI_TYPE_MODE));
+		}
+		core_hints->mode &= MRAIL_PASSTHRU_MODES;
+
+		if (core_hints->domain_attr) {
+			removed_mr_mode = core_hints->domain_attr->mr_mode &
+					  ~MRAIL_PASSTHRU_MR_MODES;
+			if (removed_mr_mode) {
+				FI_INFO(&mrail_prov, FI_LOG_CORE,
+					"Unable to pass through given MR modes: %s\n",
+					fi_tostr(&removed_mr_mode, FI_TYPE_MR_MODE));
+			}
+			core_hints->domain_attr->mr_mode &= MRAIL_PASSTHRU_MR_MODES;
+		}
+
 		if (hints->tx_attr) {
 			if (hints->tx_attr->iov_limit)
 				core_hints->tx_attr->iov_limit =
@@ -263,28 +284,6 @@ err:
 	return NULL;
 }
 
-static int mrail_check_modes(const struct fi_info *hints)
-{
-	if (!hints)
-		return 0;
-
-	if (hints->mode & ~MRAIL_PASSTHRU_MODES) {
-		FI_INFO(&mrail_prov, FI_LOG_CORE,
-			"Unable to pass through given modes: %s\n",
-			fi_tostr(&hints->mode, FI_TYPE_MODE));
-		return -FI_ENODATA;
-	}
-
-	if (hints->domain_attr &&
-	    (hints->domain_attr->mr_mode & ~MRAIL_PASSTHRU_MR_MODES)) {
-		FI_INFO(&mrail_prov, FI_LOG_CORE,
-			"Unable to pass through given MR modes: %s\n",
-			fi_tostr(&hints->domain_attr->mr_mode, FI_TYPE_MR_MODE));
-		return -FI_ENODATA;
-	}
-	return 0;
-}
-
 static int mrail_getinfo(uint32_t version, const char *node, const char *service,
 			 uint64_t flags, const struct fi_info *hints,
 			 struct fi_info **info)
@@ -298,10 +297,6 @@ static int mrail_getinfo(uint32_t version, const char *node, const char *service
 		assert(0);
 		return -FI_ENODATA;
 	}
-
-	ret = mrail_check_modes(hints);
-	if (ret)
-		return ret;
 
 	ret = mrail_get_core_info(version, node, service, flags, hints, info);
 	if (ret)

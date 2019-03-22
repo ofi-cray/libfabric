@@ -377,7 +377,7 @@ mrail_send_common(struct fid_ep *ep_fid, const struct iovec *iov, void **desc,
 	       " dest_addr: 0x%" PRIx64 "  seq: %d on rail: %d\n",
 	       len, dest_addr, peer_info->seq_no - 1, i);
 
-	ret = fi_sendmsg(mrail_ep->rails[i].ep, &msg, flags);
+	ret = fi_sendmsg(mrail_ep->rails[i].ep, &msg, flags | FI_COMPLETION);
 	if (ret) {
 		FI_WARN(&mrail_prov, FI_LOG_EP_DATA,
 			"Unable to fi_sendmsg on rail: %" PRIu32 "\n", i);
@@ -436,7 +436,7 @@ mrail_tsend_common(struct fid_ep *ep_fid, const struct iovec *iov, void **desc,
 	       " dest_addr: 0x%" PRIx64 " tag: 0x%" PRIx64 " seq: %d"
 	       " on rail: %d\n", len, dest_addr, tag, peer_info->seq_no - 1, i);
 
-	ret = fi_sendmsg(mrail_ep->rails[i].ep, &msg, flags);
+	ret = fi_sendmsg(mrail_ep->rails[i].ep, &msg, flags | FI_COMPLETION);
 	if (ret) {
 		FI_WARN(&mrail_prov, FI_LOG_EP_DATA,
 			"Unable to fi_sendmsg on rail: %" PRIu32 "\n", i);
@@ -576,8 +576,10 @@ static int mrail_getname(fid_t fid, void *addr, size_t *addrlen)
 	size_t i, offset = 0, rail_addrlen;
 	int ret;
 
-	if (*addrlen < mrail_domain->addrlen)
+	if (*addrlen < mrail_domain->addrlen) {
+		*addrlen = mrail_domain->addrlen;
 		return -FI_ETOOSMALL;
+	}
 
 	for (i = 0; i < mrail_ep->num_eps; i++) {
 		rail_addrlen = *addrlen - offset;
@@ -590,6 +592,9 @@ static int mrail_getname(fid_t fid, void *addr, size_t *addrlen)
 		}
 		offset += rail_addrlen;
 	}
+
+	assert(offset == mrail_domain->addrlen);
+	*addrlen = mrail_domain->addrlen;
 	return 0;
 }
 

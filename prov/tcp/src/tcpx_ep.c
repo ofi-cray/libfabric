@@ -716,12 +716,6 @@ static struct fi_ops_cm tcpx_pep_cm_ops = {
 	.join = fi_no_join,
 };
 
-static int tcpx_verify_info(uint32_t version, struct fi_info *info)
-{
-	/* TODO: write me! */
-	return 0;
-}
-
 static int  tcpx_pep_getopt(fid_t fid, int level, int optname,
 			    void *optval, size_t *optlen)
 {
@@ -761,7 +755,8 @@ int tcpx_passive_ep(struct fid_fabric *fabric, struct fi_info *info,
 		return -FI_EINVAL;
 	}
 
-	ret = tcpx_verify_info(fabric->api_version, info);
+	ret = ofi_check_info(&tcpx_util_prov, tcpx_util_prov.info,
+			     fabric->api_version, info);
 	if (ret)
 		return ret;
 
@@ -785,12 +780,6 @@ int tcpx_passive_ep(struct fid_fabric *fabric, struct fi_info *info,
 	_pep->cm_ctx.type = SERVER_SOCK_ACCEPT;
 	_pep->cm_ctx.cm_data_sz = 0;
 	_pep->sock = INVALID_SOCKET;
-
-	ret = tcpx_set_port_range();
-	if (ret == -FI_EINVAL) {
-		FI_WARN(&tcpx_prov, FI_LOG_EP_CTRL,"Invalid info\n");
-		return -FI_EINVAL;
-	}
 	
 	*pep = &_pep->util_pep.pep_fid;
 
@@ -808,24 +797,3 @@ err1:
 	free(_pep);
 	return ret;
 }
-
-int tcpx_set_port_range ()
-{
-	int  low   = port_range.low;
-	int  high  = port_range.high;
-
-	if (high > TCPX_PORT_MAX_RANGE) {
-		high = TCPX_PORT_MAX_RANGE;
-	}
-
-	if (low < 0 || high < 0 || low > high) {
-		FI_WARN(&tcpx_prov, FI_LOG_EP_CTRL,"Invalid info\n");
-		return -FI_EINVAL;
-	}
-
-	port_range.high = (unsigned short)high;
-	port_range.low  = (unsigned short)low;
-
-	return FI_SUCCESS;
-}
-

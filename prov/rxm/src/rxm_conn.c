@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2016 Intel Corporation, Inc.  All rights reserved.
+ * Copyright (c) 2019 Amazon.com, Inc. or its affiliates. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -84,7 +85,7 @@ static inline ssize_t rxm_eq_readerr(struct rxm_ep *rxm_ep,
 		return -FI_ECONNREFUSED;
 	}
 
-	RXM_EQ_STRERROR(&rxm_prov, FI_LOG_WARN, FI_LOG_EP_CTRL,
+	OFI_EQ_STRERROR(&rxm_prov, FI_LOG_WARN, FI_LOG_EP_CTRL,
 			rxm_ep->msg_eq, &entry->err_entry);
 	return -entry->err_entry.err;
 }
@@ -221,7 +222,7 @@ rxm_conn_inject_pkt_alloc(struct rxm_ep *rxm_ep, struct rxm_conn *rxm_conn,
 
 	memset(inject_pkt, 0, rxm_ep->inject_limit + sizeof(*inject_pkt));
 	inject_pkt->ctrl_hdr.version = RXM_CTRL_VERSION;
-	inject_pkt->ctrl_hdr.type = ofi_ctrl_data;
+	inject_pkt->ctrl_hdr.type = rxm_ctrl_eager;
 	inject_pkt->hdr.version = OFI_OP_VERSION;
 	inject_pkt->hdr.op = op;
 	inject_pkt->hdr.flags = flags;
@@ -993,7 +994,7 @@ static int rxm_conn_reprocess_directed_recvs(struct rxm_recv_queue *recv_queue)
 			if (rx_buf->ep->util_ep.flags & OFI_CNTR_ENABLED)
 				rxm_cntr_incerr(rx_buf->ep->util_ep.rx_cntr);
 
-			rxm_rx_buf_release(recv_queue->rxm_ep, rx_buf);
+			rxm_rx_buf_finish(rx_buf);
 
 			if (!(rx_buf->recv_entry->flags & FI_MULTI_RECV))
 				rxm_recv_entry_release(recv_queue,
@@ -1243,7 +1244,7 @@ rxm_conn_handle_event(struct rxm_ep *rxm_ep, struct rxm_msg_eq_entry *entry)
 			       "remote peer didn't accept the connection\n");
 			FI_DBG(&rxm_prov, FI_LOG_EP_CTRL, "connection reject: "
 			       "(reason: RXM_CMAP_REJECT_GENUINE)\n");
-			RXM_EQ_STRERROR(&rxm_prov, FI_LOG_WARN, FI_LOG_EP_CTRL,
+			OFI_EQ_STRERROR(&rxm_prov, FI_LOG_WARN, FI_LOG_EP_CTRL,
 					rxm_ep->msg_eq, &entry->err_entry);
 		} else if (reject_reason == RXM_CMAP_REJECT_SIMULT_CONN) {
 			FI_DBG(&rxm_prov, FI_LOG_EP_CTRL, "connection reject: "

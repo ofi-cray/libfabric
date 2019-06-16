@@ -188,6 +188,9 @@ See [`fi_rxm`(7)](fi_rxm.7.html) for more information.
 
 ***
 
+The sockets provider has been deprecated in favor of the tcp, udp, and
+utility providers, which provide improved performance and stability.
+
 The `sockets` provider is a general purpose provider that can be used on any
 system that supports TCP sockets.  The provider is not intended to provide
 performance improvements over regular TCP sockets, but rather to allow
@@ -367,6 +370,17 @@ See the `fi_shm(7)` man page for more details.
 - The shared memory provider only works on Linux platforms and makes use of
   kernel support for 'cross-memory attach' (CMA) data copies for large
   transfers.
+
+### efa
+
+***
+
+The `efa` provider enables the use of libfabric-enabled applications on [Amazon
+EC2 Elastic Fabric Adapter (EFA)](https://aws.amazon.com/hpc/efa/), a
+custom-built OS bypass hardware interface for inter-instance communication on
+EC2.
+
+See [`fi_efa`(7)](fi_efa.7.html) for more information.
 
 ## WINDOWS Instructions
 

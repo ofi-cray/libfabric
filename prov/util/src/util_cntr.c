@@ -138,16 +138,18 @@ static int ofi_cntr_seterr(struct fid_cntr *cntr_fid, uint64_t value)
 	return FI_SUCCESS;
 }
 
+#define OFI_TIMEOUT_QUANTUM_MS 50
+
 static int ofi_cntr_wait(struct fid_cntr *cntr_fid, uint64_t threshold, int timeout)
 {
 	struct util_cntr *cntr;
-	uint64_t start, errcnt;
-	int ret;
+	uint64_t endtime, errcnt;
+	int ret, timeout_quantum;
 
 	cntr = container_of(cntr_fid, struct util_cntr, cntr_fid);
 	assert(cntr->wait);
 	errcnt = ofi_atomic_get64(&cntr->err);
-	start = (timeout >= 0) ? fi_gettime_ms() : 0;
+	endtime = ofi_timeout_time(timeout);
 
 	do {
 		cntr->progress(cntr);
@@ -157,14 +159,25 @@ static int ofi_cntr_wait(struct fid_cntr *cntr_fid, uint64_t threshold, int time
 		if (errcnt != ofi_atomic_get64(&cntr->err))
 			return -FI_EAVAIL;
 
-		if (timeout >= 0) {
-			timeout -= (int) (fi_gettime_ms() - start);
-			if (timeout <= 0)
-				return -FI_ETIMEDOUT;
-		}
+		if (ofi_adjust_timeout(endtime, &timeout))
+			return -FI_ETIMEDOUT;
 
-		ret = fi_wait(&cntr->wait->wait_fid, timeout);
-	} while (!ret);
+		/*
+		 * Temporary work-around to avoid a thread hanging in underlying
+		 * epoll_wait called from fi_wait. This can happen if one thread
+		 * updates the counter, another thread reads it (thereby resetting
+		 * cntr signal fd) and the current thread is about to wait. The
+		 * current thread would never wake up and doesn't know the counter
+		 * has been updated. Fix it by checking counter state every now
+		 * and then instead of waiting for a longer period. This does
+		 * have the overhead of threads waking up unnecessarily.
+		 */
+		timeout_quantum = (timeout < 0 ? OFI_TIMEOUT_QUANTUM_MS :
+				   MIN(OFI_TIMEOUT_QUANTUM_MS, timeout));
+
+		ret = fi_wait(&cntr->wait->wait_fid, timeout_quantum);
+	} while (!ret || (ret == -FI_ETIMEDOUT &&
+			  (timeout < 0 || timeout_quantum < timeout)));
 
 	return ret;
 }

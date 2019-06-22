@@ -327,7 +327,7 @@ int rxr_cq_handle_cq_error(struct rxr_ep *ep, ssize_t err)
 			err_entry.prov_errno = ret;
 		} else {
 			FI_WARN(&rxr_prov, FI_LOG_CQ,
-				"fi_cq_readerr unexpected size %lu expected %lu\n",
+				"fi_cq_readerr unexpected size %zu expected %zu\n",
 				ret, sizeof(err_entry));
 			err_entry.prov_errno = -FI_EIO;
 		}
@@ -491,7 +491,7 @@ static void rxr_cq_post_connack(struct rxr_ep *ep,
 		if (ret == -FI_EAGAIN)
 			return;
 		FI_WARN(&rxr_prov, FI_LOG_CQ,
-			"Failed to send a CONNACK packet: ret %ld\n", ret);
+			"Failed to send a CONNACK packet: ret %zd\n", ret);
 	} else {
 		peer->state = RXR_PEER_ACKED;
 	}
@@ -551,7 +551,7 @@ int rxr_cq_write_rx_completion(struct rxr_ep *ep,
 	int ret = 0;
 	if (OFI_UNLIKELY(rx_entry->cq_entry.len < rx_entry->total_len)) {
 		FI_WARN(&rxr_prov, FI_LOG_CQ,
-			"Message truncated: tag: %lx len: %lu total_len: %lu\n",
+			"Message truncated: tag: %"PRIu64" len: %"PRIu64" total_len: %zu\n",
 			rx_entry->cq_entry.tag,	rx_entry->total_len,
 			rx_entry->cq_entry.len);
 
@@ -870,25 +870,12 @@ static int rxr_cq_process_rts(struct rxr_ep *ep,
 	if (rx_entry->cq_entry.flags & FI_READ) {
 		/*
 		 * create a tx_entry for sending data back to initiator
-		 * this tx_entry works similar to a send tx_entry thus its op was
-		 * set to ofi_op_msg. Note this tx_entry will not write a completion
 		 */
-		tx_entry = rxr_ep_tx_entry_init(ep, rx_entry->iov, rx_entry->iov_count,
-						NULL, 0, rx_entry->addr, rx_entry->tag,
-						0, NULL, ofi_op_msg, 0);
-		tx_entry->cq_entry.flags |= FI_READ;
-		/* rma_loc_rx_id is for later retrieve of rx_entry
-		 * to write rx_completion
-		 */
-		tx_entry->rma_loc_rx_id = rx_entry->rx_id;
-
-		/* the following is essentially handle CTS */
-		tx_entry->rx_id = rx_entry->rma_initiator_rx_id;
-		tx_entry->window = rx_entry->window;
+		tx_entry = rxr_readrsp_tx_entry_init(ep, rx_entry);
 
 		/* this tx_entry will be added to tx_pending_list
 		 * after we receive the send completion of read
-		 * respponse packet.
+		 * response packet.
 		 */
 		ret = rxr_ep_post_read_response(ep, tx_entry);
 		if (!ret) {
@@ -1154,8 +1141,11 @@ static void rxr_cq_handle_cts(struct rxr_ep *ep,
 	struct rxr_tx_entry *tx_entry;
 
 	cts_pkt = (struct rxr_cts_hdr *)pkt_entry->pkt;
+	if (cts_pkt->flags & RXR_READ_REQ)
+		tx_entry = ofi_bufpool_get_ibuf(ep->readrsp_tx_entry_pool, cts_pkt->tx_id);
+	else
+		tx_entry = ofi_bufpool_get_ibuf(ep->tx_entry_pool, cts_pkt->tx_id);
 
-	tx_entry = ofi_bufpool_get_ibuf(ep->tx_entry_pool, cts_pkt->tx_id);
 	tx_entry->rx_id = cts_pkt->rx_id;
 	tx_entry->window = cts_pkt->window;
 
@@ -1379,15 +1369,12 @@ void rxr_cq_handle_pkt_send_completion(struct rxr_ep *ep, struct fi_cq_msg_entry
 	case RXR_READ_RESPONSE_PKT:
 		read_response_hdr = rxr_get_read_response_hdr(pkt_entry->pkt);
 		tx_id = read_response_hdr->tx_id;
-		tx_entry = ofi_bufpool_get_ibuf(ep->tx_entry_pool, tx_id);
+		tx_entry = ofi_bufpool_get_ibuf(ep->readrsp_tx_entry_pool, tx_id);
 		assert(tx_entry->cq_entry.flags & FI_READ);
 		assert(tx_entry->state == RXR_TX_SENT_READ_RESPONSE);
 		tx_entry->state = RXR_TX_SEND; /* ready to send */
 		tx_entry->bytes_sent = 0;
 		tx_entry->bytes_acked = 0;
-		tx_entry->msg_id = 0; /* this tx_entry does not send rts
-				       * therefore should not increase msg_id
-				       */
 		dlist_insert_tail(&tx_entry->entry, &ep->tx_pending_list);
 		break;
 	default:

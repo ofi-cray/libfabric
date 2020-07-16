@@ -1,0 +1,5 @@
+1..4
+ok 1 fi_info
+ok 2 fi_info_xrc
+ok 3 prefer_rc
+ok 4 prefer_xrc
